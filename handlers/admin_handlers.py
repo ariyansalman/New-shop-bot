@@ -1,5 +1,19 @@
-"""Admin panel command and callback handlers."""
+"""Admin panel command and callback handlers.
 
+Same asyncio.to_thread refactor as the user-facing handler modules: every
+"with get_db_session()" block's query work runs in a nested _sync()
+closure off the event loop, returning only plain data, with the final
+Telegram API call left on the event loop. Blocking here still freezes
+every other user's handler while it runs, even though only the store
+owner triggers these.
+
+_build_user_detail_sync and _restock_keys_sync are pulled out to module
+level because the original code had that exact block duplicated 2-3 times
+(view/ban/unban user detail; file-upload/paste restock) - mechanical dedup
+of already-identical code, not a behavior change.
+"""
+
+import asyncio
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -62,14 +76,15 @@ async def admin_action_log_callback(update: Update, context: ContextTypes.DEFAUL
 
     await query.answer()
 
-    with get_db_session() as session:
-        entries = session.query(AdminActionLog).order_by(
-            AdminActionLog.created_at.desc()
-        ).limit(20).all()
+    def _sync():
+        with get_db_session() as session:
+            entries = session.query(AdminActionLog).order_by(
+                AdminActionLog.created_at.desc()
+            ).limit(20).all()
 
-        if not entries:
-            message = "📜 Admin Action Log\n\nNo actions recorded yet."
-        else:
+            if not entries:
+                return "📜 Admin Action Log\n\nNo actions recorded yet."
+
             lines = ["📜 Admin Action Log (last 20)\n"]
             for entry in entries:
                 when = entry.created_at.strftime('%Y-%m-%d %H:%M')
@@ -78,7 +93,9 @@ async def admin_action_log_callback(update: Update, context: ContextTypes.DEFAUL
                 if entry.details:
                     line += f" ({entry.details})"
                 lines.append(line)
-            message = "\n".join(lines)
+            return "\n".join(lines)
+
+    message = await asyncio.to_thread(_sync)
 
     keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="admin_menu")]]
     await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
@@ -96,35 +113,38 @@ async def admin_restock_keys_callback(update: Update, context: ContextTypes.DEFA
 
     await query.answer()
 
-    with get_db_session() as session:
-        # Get all KEY type products
-        products = session.query(Product).filter_by(product_type=ProductType.KEY).all()
+    def _sync():
+        with get_db_session() as session:
+            # Get all KEY type products
+            products = session.query(Product).filter_by(product_type=ProductType.KEY).all()
+            return [(p.id, p.name, p.stock_count) for p in products]
 
-        if not products:
-            await query.edit_message_text(
-                "❌ No KEY products found. Please create a product first.",
-                reply_markup=create_admin_product_menu_keyboard()
-            )
-            return
+    products = await asyncio.to_thread(_sync)
 
-        # Build product selection keyboard
-        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-        keyboard = []
-        for product in products[:10]:  # Show first 10
-            keyboard.append([
-                InlineKeyboardButton(
-                    f"📦 {product.name} (Stock: {product.stock_count})",
-                    callback_data=f"select_product_{product.id}"
-                )
-            ])
-
-        # Add back button
-        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="admin_products")])
-
+    if not products:
         await query.edit_message_text(
-            "🔄 Select a product to restock:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            "❌ No KEY products found. Please create a product first.",
+            reply_markup=create_admin_product_menu_keyboard()
         )
+        return
+
+    # Build product selection keyboard
+    keyboard = []
+    for product_id, name, stock_count in products[:10]:  # Show first 10
+        keyboard.append([
+            InlineKeyboardButton(
+                f"📦 {name} (Stock: {stock_count})",
+                callback_data=f"select_product_{product_id}"
+            )
+        ])
+
+    # Add back button
+    keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="admin_products")])
+
+    await query.edit_message_text(
+        "🔄 Select a product to restock:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 
 async def admin_select_product_restock_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -145,18 +165,26 @@ async def admin_select_product_restock_callback(update: Update, context: Context
     # Store product ID in context for later use
     context.user_data['restock_product_id'] = product_id
 
-    with get_db_session() as session:
-        product = session.query(Product).filter_by(id=product_id).first()
+    def _sync():
+        with get_db_session() as session:
+            product = session.query(Product).filter_by(id=product_id).first()
+            if not product:
+                return None
+            return product.name, product.stock_count
 
-        if not product:
-            await query.edit_message_text(
-                "❌ Product not found.",
-                reply_markup=create_admin_product_menu_keyboard()
-            )
-            return
+    result = await asyncio.to_thread(_sync)
 
-        message = f"""🔄 Restocking: {product.name}
-Current Stock: {product.stock_count}
+    if result is None:
+        await query.edit_message_text(
+            "❌ Product not found.",
+            reply_markup=create_admin_product_menu_keyboard()
+        )
+        return
+
+    product_name, stock_count = result
+
+    message = f"""🔄 Restocking: {product_name}
+Current Stock: {stock_count}
 
 📤 Upload a .txt file with keys (one per line)
 OR
@@ -167,17 +195,16 @@ KEY1-XXXX-XXXX-XXXX
 KEY2-XXXX-XXXX-XXXX
 KEY3-XXXX-XXXX-XXXX"""
 
-        # Create keyboard with cancel button
-        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-        keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel_restock")]]
+    # Create keyboard with cancel button
+    keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel_restock")]]
 
-        await query.edit_message_text(
-            message,
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+    await query.edit_message_text(
+        message,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
-        # Return state to wait for keys
-        return WAITING_FOR_KEYS
+    # Return state to wait for keys
+    return WAITING_FOR_KEYS
 
 
 async def admin_products_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -236,28 +263,36 @@ async def admin_view_categories_callback(update: Update, context: ContextTypes.D
 
     await query.answer()
 
-    with get_db_session() as session:
-        categories = session.query(Category).all()
+    def _sync():
+        with get_db_session() as session:
+            categories = session.query(Category).all()
 
-        if not categories:
-            await query.edit_message_text("📁 No categories found.")
-            return
+            if not categories:
+                return None
 
-        message = "📁 Categories & Subcategories:\n\n"
+            message = "📁 Categories & Subcategories:\n\n"
 
-        for cat in categories:
-            message += f"📦 {cat.name} (ID: #{cat.id})\n"
-            if cat.description:
-                message += f"   {cat.description}\n"
+            for cat in categories:
+                message += f"📦 {cat.name} (ID: #{cat.id})\n"
+                if cat.description:
+                    message += f"   {cat.description}\n"
 
-            subcategories = session.query(Subcategory).filter_by(category_id=cat.id).all()
-            if subcategories:
-                for subcat in subcategories:
-                    message += f"   └─ {subcat.name} (ID: #{subcat.id})\n"
+                subcategories = session.query(Subcategory).filter_by(category_id=cat.id).all()
+                if subcategories:
+                    for subcat in subcategories:
+                        message += f"   └─ {subcat.name} (ID: #{subcat.id})\n"
 
-            message += "\n"
+                message += "\n"
 
-        await query.edit_message_text(message, reply_markup=create_admin_category_menu_keyboard())
+            return message
+
+    message = await asyncio.to_thread(_sync)
+
+    if message is None:
+        await query.edit_message_text("📁 No categories found.")
+        return
+
+    await query.edit_message_text(message, reply_markup=create_admin_category_menu_keyboard())
 
 
 async def admin_users_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -365,53 +400,91 @@ async def admin_view_users_callback(update: Update, context: ContextTypes.DEFAUL
     if "_page_" in query.data:
         page = int(query.data.split("_page_")[1])
 
-    with get_db_session() as session:
-        # Get all users
-        all_users = session.query(User).order_by(User.created_at.desc()).all()
+    def _sync():
+        with get_db_session() as session:
+            all_users = session.query(User).order_by(User.created_at.desc()).all()
+            return [(u.id, u.telegram_id, u.username, u.wallet_balance, u.is_banned) for u in all_users]
 
-        if not all_users:
-            await query.edit_message_text(
-                "👥 No users found.",
-                reply_markup=create_admin_user_menu_keyboard()
-            )
-            return
+    users_data = await asyncio.to_thread(_sync)
 
-        # Pagination settings
-        items_per_page = 5
-        total_pages = (len(all_users) + items_per_page - 1) // items_per_page
-        start_idx = page * items_per_page
-        end_idx = start_idx + items_per_page
-        users = all_users[start_idx:end_idx]
-
-        # Build user selection keyboard
-        keyboard = []
-        for user in users:
-            status_icon = "🚫" if user.is_banned else "✅"
-            username_display = f"@{user.username}" if user.username else f"ID:{user.telegram_id}"
-            keyboard.append([
-                InlineKeyboardButton(
-                    f"{status_icon} {username_display} - {format_price(user.wallet_balance)}",
-                    callback_data=f"view_user_{user.id}"
-                )
-            ])
-
-        # Add pagination buttons if needed
-        if total_pages > 1:
-            pagination_row = []
-            if page > 0:
-                pagination_row.append(InlineKeyboardButton("◀️ Previous", callback_data=f"admin_view_users_page_{page-1}"))
-            pagination_row.append(InlineKeyboardButton(f"Page {page+1}/{total_pages}", callback_data="noop"))
-            if page < total_pages - 1:
-                pagination_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"admin_view_users_page_{page+1}"))
-            keyboard.append(pagination_row)
-
-        # Add back button
-        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="admin_users")])
-
+    if not users_data:
         await query.edit_message_text(
-            "👥 User List\n\nSelect a user to view details:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            "👥 No users found.",
+            reply_markup=create_admin_user_menu_keyboard()
         )
+        return
+
+    # Pagination settings
+    items_per_page = 5
+    total_pages = (len(users_data) + items_per_page - 1) // items_per_page
+    start_idx = page * items_per_page
+    end_idx = start_idx + items_per_page
+    page_users = users_data[start_idx:end_idx]
+
+    # Build user selection keyboard
+    keyboard = []
+    for user_id, telegram_id, username, wallet_balance, is_banned in page_users:
+        status_icon = "🚫" if is_banned else "✅"
+        username_display = f"@{username}" if username else f"ID:{telegram_id}"
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{status_icon} {username_display} - {format_price(wallet_balance)}",
+                callback_data=f"view_user_{user_id}"
+            )
+        ])
+
+    # Add pagination buttons if needed
+    if total_pages > 1:
+        pagination_row = []
+        if page > 0:
+            pagination_row.append(InlineKeyboardButton("◀️ Previous", callback_data=f"admin_view_users_page_{page-1}"))
+        pagination_row.append(InlineKeyboardButton(f"Page {page+1}/{total_pages}", callback_data="noop"))
+        if page < total_pages - 1:
+            pagination_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"admin_view_users_page_{page+1}"))
+        keyboard.append(pagination_row)
+
+    # Add back button
+    keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="admin_users")])
+
+    await query.edit_message_text(
+        "👥 User List\n\nSelect a user to view details:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+def _build_user_detail_sync(session, user):
+    """Build the user detail message + Ban/Unban keyboard.
+
+    Shared by admin_user_detail_callback, admin_ban_user_callback and
+    admin_unban_user_callback (all three rendered this exact view in the
+    original code) - must be called with `session` still open, since it
+    runs queries against `user`'s relations.
+    """
+    orders_count = session.query(Order).filter_by(user_id=user.id).count()
+    total_spent = session.query(Order).filter_by(user_id=user.id, status=OrderStatus.COMPLETED).with_entities(
+        func.sum(Order.total_amount)
+    ).scalar() or 0
+
+    status = "🚫 Banned" if user.is_banned else "✅ Active"
+    username_display = f"@{user.username}" if user.username else "N/A"
+
+    message = "👤 User Details\n\n"
+    message += f"Telegram ID: {user.telegram_id}\n"
+    message += f"Username: {username_display}\n"
+    message += f"Balance: {format_price(user.wallet_balance)}\n"
+    message += f"Status: {status}\n"
+    message += f"Total Orders: {orders_count}\n"
+    message += f"Total Spent: {format_price(total_spent)}\n"
+    message += f"Joined: {user.created_at.strftime('%Y-%m-%d %H:%M')}\n"
+
+    keyboard = []
+    if user.is_banned:
+        keyboard.append([InlineKeyboardButton("✅ Unban User", callback_data=f"unban_user_{user.id}")])
+    else:
+        keyboard.append([InlineKeyboardButton("🚫 Ban User", callback_data=f"ban_user_{user.id}")])
+    keyboard.append([InlineKeyboardButton("🔙 Back to User List", callback_data="admin_view_users")])
+
+    return message, InlineKeyboardMarkup(keyboard)
 
 
 async def admin_user_detail_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -435,51 +508,24 @@ async def admin_user_detail_callback(update: Update, context: ContextTypes.DEFAU
         await query.edit_message_text("❌ Invalid request.")
         return
 
-    with get_db_session() as session:
-        user = session.query(User).filter_by(id=user_id).first()
+    def _sync():
+        with get_db_session() as session:
+            user = session.query(User).filter_by(id=user_id).first()
+            if not user:
+                return None
+            return _build_user_detail_sync(session, user)
 
-        if not user:
-            await query.edit_message_text(
-                "❌ User not found.",
-                reply_markup=create_admin_user_menu_keyboard()
-            )
-            return
+    result = await asyncio.to_thread(_sync)
 
-        # Get user statistics
-        orders_count = session.query(Order).filter_by(user_id=user.id).count()
-        total_spent = session.query(Order).filter_by(user_id=user.id, status=OrderStatus.COMPLETED).with_entities(
-            func.sum(Order.total_amount)
-        ).scalar() or 0
-
-        # Format user details
-        status = "🚫 Banned" if user.is_banned else "✅ Active"
-        username_display = f"@{user.username}" if user.username else "N/A"
-
-        message = "👤 User Details\n\n"
-        message += f"Telegram ID: {user.telegram_id}\n"
-        message += f"Username: {username_display}\n"
-        message += f"Balance: {format_price(user.wallet_balance)}\n"
-        message += f"Status: {status}\n"
-        message += f"Total Orders: {orders_count}\n"
-        message += f"Total Spent: {format_price(total_spent)}\n"
-        message += f"Joined: {user.created_at.strftime('%Y-%m-%d %H:%M')}\n"
-
-        # Build action keyboard
-        keyboard = []
-
-        # Ban/Unban button
-        if user.is_banned:
-            keyboard.append([InlineKeyboardButton("✅ Unban User", callback_data=f"unban_user_{user.id}")])
-        else:
-            keyboard.append([InlineKeyboardButton("🚫 Ban User", callback_data=f"ban_user_{user.id}")])
-
-        # Back button
-        keyboard.append([InlineKeyboardButton("🔙 Back to User List", callback_data="admin_view_users")])
-
+    if result is None:
         await query.edit_message_text(
-            message,
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            "❌ User not found.",
+            reply_markup=create_admin_user_menu_keyboard()
         )
+        return
+
+    message, reply_markup = result
+    await query.edit_message_text(message, reply_markup=reply_markup)
 
 
 async def admin_ban_user_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -501,66 +547,40 @@ async def admin_ban_user_callback(update: Update, context: ContextTypes.DEFAULT_
         await query.edit_message_text("❌ Invalid request.")
         return
 
-    with get_db_session() as session:
-        user = session.query(User).filter_by(id=user_id).first()
+    def _sync():
+        with get_db_session() as session:
+            user = session.query(User).filter_by(id=user_id).first()
 
-        if not user:
-            await query.edit_message_text(
-                "❌ User not found.",
-                reply_markup=create_admin_user_menu_keyboard()
-            )
-            return
+            if not user:
+                return None
 
-        # Store telegram_id before committing
-        telegram_id = user.telegram_id
+            # Store telegram_id before committing
+            telegram_id = user.telegram_id
 
-        user.is_banned = True
-        log_admin_action(session, update.effective_user.id, "ban_user",
-                          target_type="user", target_id=user.id,
-                          details=f"telegram_id={telegram_id}")
-        session.commit()
+            user.is_banned = True
+            log_admin_action(session, update.effective_user.id, "ban_user",
+                              target_type="user", target_id=user.id,
+                              details=f"telegram_id={telegram_id}")
+            session.commit()
 
-        # Clear ban cache for this user
-        clear_ban_cache(telegram_id)
+            # Clear ban cache for this user
+            clear_ban_cache(telegram_id)
 
-        # Refresh user details page - get updated data
-        user = session.query(User).filter_by(id=user_id).first()
+            # Refresh user details page - get updated data
+            user = session.query(User).filter_by(id=user_id).first()
+            return _build_user_detail_sync(session, user)
 
-        # Get user statistics
-        orders_count = session.query(Order).filter_by(user_id=user.id).count()
-        total_spent = session.query(Order).filter_by(user_id=user.id, status=OrderStatus.COMPLETED).with_entities(
-            func.sum(Order.total_amount)
-        ).scalar() or 0
+    result = await asyncio.to_thread(_sync)
 
-        # Format user details
-        status = "🚫 Banned" if user.is_banned else "✅ Active"
-        username_display = f"@{user.username}" if user.username else "N/A"
-
-        message = "👤 User Details\n\n"
-        message += f"Telegram ID: {user.telegram_id}\n"
-        message += f"Username: {username_display}\n"
-        message += f"Balance: {format_price(user.wallet_balance)}\n"
-        message += f"Status: {status}\n"
-        message += f"Total Orders: {orders_count}\n"
-        message += f"Total Spent: {format_price(total_spent)}\n"
-        message += f"Joined: {user.created_at.strftime('%Y-%m-%d %H:%M')}\n"
-
-        # Build action keyboard
-        keyboard = []
-
-        # Ban/Unban button
-        if user.is_banned:
-            keyboard.append([InlineKeyboardButton("✅ Unban User", callback_data=f"unban_user_{user.id}")])
-        else:
-            keyboard.append([InlineKeyboardButton("🚫 Ban User", callback_data=f"ban_user_{user.id}")])
-
-        # Back button
-        keyboard.append([InlineKeyboardButton("🔙 Back to User List", callback_data="admin_view_users")])
-
+    if result is None:
         await query.edit_message_text(
-            message,
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            "❌ User not found.",
+            reply_markup=create_admin_user_menu_keyboard()
         )
+        return
+
+    message, reply_markup = result
+    await query.edit_message_text(message, reply_markup=reply_markup)
 
 
 async def admin_unban_user_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -580,66 +600,40 @@ async def admin_unban_user_callback(update: Update, context: ContextTypes.DEFAUL
         await query.edit_message_text("❌ Invalid request.")
         return
 
-    with get_db_session() as session:
-        user = session.query(User).filter_by(id=user_id).first()
+    def _sync():
+        with get_db_session() as session:
+            user = session.query(User).filter_by(id=user_id).first()
 
-        if not user:
-            await query.edit_message_text(
-                "❌ User not found.",
-                reply_markup=create_admin_user_menu_keyboard()
-            )
-            return
+            if not user:
+                return None
 
-        # Store telegram_id before committing
-        telegram_id = user.telegram_id
+            # Store telegram_id before committing
+            telegram_id = user.telegram_id
 
-        user.is_banned = False
-        log_admin_action(session, update.effective_user.id, "unban_user",
-                          target_type="user", target_id=user.id,
-                          details=f"telegram_id={telegram_id}")
-        session.commit()
+            user.is_banned = False
+            log_admin_action(session, update.effective_user.id, "unban_user",
+                              target_type="user", target_id=user.id,
+                              details=f"telegram_id={telegram_id}")
+            session.commit()
 
-        # Clear ban cache for this user
-        clear_ban_cache(telegram_id)
+            # Clear ban cache for this user
+            clear_ban_cache(telegram_id)
 
-        # Refresh user details page - get updated data
-        user = session.query(User).filter_by(id=user_id).first()
+            # Refresh user details page - get updated data
+            user = session.query(User).filter_by(id=user_id).first()
+            return _build_user_detail_sync(session, user)
 
-        # Get user statistics
-        orders_count = session.query(Order).filter_by(user_id=user.id).count()
-        total_spent = session.query(Order).filter_by(user_id=user.id, status=OrderStatus.COMPLETED).with_entities(
-            func.sum(Order.total_amount)
-        ).scalar() or 0
+    result = await asyncio.to_thread(_sync)
 
-        # Format user details
-        status = "🚫 Banned" if user.is_banned else "✅ Active"
-        username_display = f"@{user.username}" if user.username else "N/A"
-
-        message = "👤 User Details\n\n"
-        message += f"Telegram ID: {user.telegram_id}\n"
-        message += f"Username: {username_display}\n"
-        message += f"Balance: {format_price(user.wallet_balance)}\n"
-        message += f"Status: {status}\n"
-        message += f"Total Orders: {orders_count}\n"
-        message += f"Total Spent: {format_price(total_spent)}\n"
-        message += f"Joined: {user.created_at.strftime('%Y-%m-%d %H:%M')}\n"
-
-        # Build action keyboard
-        keyboard = []
-
-        # Ban/Unban button
-        if user.is_banned:
-            keyboard.append([InlineKeyboardButton("✅ Unban User", callback_data=f"unban_user_{user.id}")])
-        else:
-            keyboard.append([InlineKeyboardButton("🚫 Ban User", callback_data=f"ban_user_{user.id}")])
-
-        # Back button
-        keyboard.append([InlineKeyboardButton("🔙 Back to User List", callback_data="admin_view_users")])
-
+    if result is None:
         await query.edit_message_text(
-            message,
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            "❌ User not found.",
+            reply_markup=create_admin_user_menu_keyboard()
         )
+        return
+
+    message, reply_markup = result
+    await query.edit_message_text(message, reply_markup=reply_markup)
 
 
 async def admin_view_orders_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -659,62 +653,118 @@ async def admin_view_orders_callback(update: Update, context: ContextTypes.DEFAU
     if "_page_" in query.data:
         page = int(query.data.split("_page_")[1])
 
-    with get_db_session() as session:
-        # Get all orders
-        all_orders = session.query(Order).order_by(Order.created_at.desc()).all()
+    def _sync():
+        with get_db_session() as session:
+            all_orders = session.query(Order).order_by(Order.created_at.desc()).all()
 
-        if not all_orders:
-            await query.edit_message_text(
-                "🛍 No orders found.",
-                reply_markup=create_admin_order_menu_keyboard()
-            )
-            return
+            rows = []
+            for order in all_orders:
+                user = session.query(User).filter_by(id=order.user_id).first()
+                username = user.username if user and user.username else f"ID:{user.telegram_id if user else 'Unknown'}"
+                rows.append((order.id, order.status, order.total_amount, username))
+            return rows
 
-        # Pagination settings
-        orders_per_page = 5
-        total_pages = (len(all_orders) + orders_per_page - 1) // orders_per_page
-        start_idx = page * orders_per_page
-        end_idx = start_idx + orders_per_page
-        orders = all_orders[start_idx:end_idx]
+    rows = await asyncio.to_thread(_sync)
 
-        # Build message
-        message = f"🛍 Recent Orders (Page {page + 1}/{total_pages}):\n\n"
-
-        # Build keyboard with order buttons
-        keyboard = []
-
-        for order in orders:
-            user = session.query(User).filter_by(id=order.user_id).first()
-            username = user.username if user and user.username else f"ID:{user.telegram_id if user else 'Unknown'}"
-
-            # Format status emoji
-            status_emoji = {
-                OrderStatus.PROCESSING: "⏳",
-                OrderStatus.COMPLETED: "✅",
-                OrderStatus.CANCELLED: "❌"
-            }.get(order.status, "❓")
-
-            # Button text: Order #ID | User | Status | Amount
-            button_text = f"{status_emoji} Order #{order.id} | @{username} | {format_price(order.total_amount)}"
-            keyboard.append([InlineKeyboardButton(button_text, callback_data=f"view_order_{order.id}")])
-
-        # Add pagination buttons if needed
-        if total_pages > 1:
-            pagination_row = []
-            if page > 0:
-                pagination_row.append(InlineKeyboardButton("◀️ Previous", callback_data=f"admin_view_orders_page_{page-1}"))
-            if page < total_pages - 1:
-                pagination_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"admin_view_orders_page_{page+1}"))
-            if pagination_row:
-                keyboard.append(pagination_row)
-
-        # Add back button
-        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="admin_orders")])
-
+    if not rows:
         await query.edit_message_text(
-            message,
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            "🛍 No orders found.",
+            reply_markup=create_admin_order_menu_keyboard()
         )
+        return
+
+    # Pagination settings
+    orders_per_page = 5
+    total_pages = (len(rows) + orders_per_page - 1) // orders_per_page
+    start_idx = page * orders_per_page
+    end_idx = start_idx + orders_per_page
+    page_rows = rows[start_idx:end_idx]
+
+    # Build message
+    message = f"🛍 Recent Orders (Page {page + 1}/{total_pages}):\n\n"
+
+    # Build keyboard with order buttons
+    keyboard = []
+
+    for order_id, status, total_amount, username in page_rows:
+        # Format status emoji
+        status_emoji = {
+            OrderStatus.PROCESSING: "⏳",
+            OrderStatus.COMPLETED: "✅",
+            OrderStatus.CANCELLED: "❌"
+        }.get(status, "❓")
+
+        # Button text: Order #ID | User | Status | Amount
+        button_text = f"{status_emoji} Order #{order_id} | @{username} | {format_price(total_amount)}"
+        keyboard.append([InlineKeyboardButton(button_text, callback_data=f"view_order_{order_id}")])
+
+    # Add pagination buttons if needed
+    if total_pages > 1:
+        pagination_row = []
+        if page > 0:
+            pagination_row.append(InlineKeyboardButton("◀️ Previous", callback_data=f"admin_view_orders_page_{page-1}"))
+        if page < total_pages - 1:
+            pagination_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"admin_view_orders_page_{page+1}"))
+        if pagination_row:
+            keyboard.append(pagination_row)
+
+    # Add back button
+    keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="admin_orders")])
+
+    await query.edit_message_text(
+        message,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+def _restock_keys_sync(product_id, keys, admin_telegram_id):
+    """Add `keys` to `product_id`'s stock, skipping duplicates.
+
+    Shared by handle_restock_keys_file and handle_restock_keys_paste (both
+    had this exact block in the original code). Returns None if the
+    product doesn't exist, else (product_name, added_count, skipped_count,
+    new_stock_count).
+    """
+    with get_db_session() as session:
+        product = session.query(Product).filter_by(id=product_id).first()
+
+        if not product:
+            return None
+
+        # Skip keys that already exist for this product, so a re-uploaded file
+        # cannot inflate stock with duplicates that would be delivered twice.
+        existing = {
+            k[0] for k in session.query(ProductKey.key_value)
+            .filter_by(product_id=product.id).all()
+        }
+        added_count = 0
+        skipped = 0
+        for key_value in keys:
+            if key_value in existing:
+                skipped += 1
+                continue
+            existing.add(key_value)
+            session.add(ProductKey(
+                product_id=product.id,
+                key_value=key_value,
+                is_sold=False
+            ))
+            added_count += 1
+
+        # Keep stock in sync with the real unsold-key count. The newly added
+        # keys above are already in this count: session.query() autoflushes
+        # pending session.add() calls before running, so they're already in
+        # the DB by the time count() runs - adding + added_count on top of
+        # that used to double-count every restock.
+        product.stock_count = session.query(ProductKey).filter_by(
+            product_id=product.id, is_sold=False
+        ).count()
+        log_admin_action(session, admin_telegram_id, "restock_keys",
+                          target_type="product", target_id=product.id,
+                          details=f"added={added_count}, skipped_duplicates={skipped}")
+        session.commit()
+
+        return product.name, added_count, skipped, product.stock_count
 
 
 async def handle_restock_keys_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -759,67 +809,33 @@ async def handle_restock_keys_file(update: Update, context: ContextTypes.DEFAULT
         await update.message.reply_text("❌ Error: Product not selected. Please start over.")
         return ConversationHandler.END
 
-    # Add keys to product_keys table
-    with get_db_session() as session:
-        product = session.query(Product).filter_by(id=product_id).first()
+    result = await asyncio.to_thread(_restock_keys_sync, product_id, keys, update.effective_user.id)
 
-        if not product:
-            await update.message.reply_text("❌ Product not found.")
-            context.user_data.pop('restock_product_id', None)
-            return ConversationHandler.END
-
-        # Skip keys that already exist for this product, so a re-uploaded file
-        # cannot inflate stock with duplicates that would be delivered twice.
-        existing = {
-            k[0] for k in session.query(ProductKey.key_value)
-            .filter_by(product_id=product.id).all()
-        }
-        added_count = 0
-        skipped = 0
-        for key_value in keys:
-            if key_value in existing:
-                skipped += 1
-                continue
-            existing.add(key_value)
-            session.add(ProductKey(
-                product_id=product.id,
-                key_value=key_value,
-                is_sold=False
-            ))
-            added_count += 1
-
-        # Keep stock in sync with the real unsold-key count. The newly added
-        # keys above are already in this count: session.query() autoflushes
-        # pending session.add() calls before running, so they're already in
-        # the DB by the time count() runs - adding + added_count on top of
-        # that used to double-count every restock.
-        product.stock_count = session.query(ProductKey).filter_by(
-            product_id=product.id, is_sold=False
-        ).count()
-        log_admin_action(session, update.effective_user.id, "restock_keys",
-                          target_type="product", target_id=product.id,
-                          details=f"added={added_count}, skipped_duplicates={skipped}")
-        session.commit()
-
-        # Create keyboard with options
-        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-        keyboard = [
-            [InlineKeyboardButton("🔄 Restock More Keys", callback_data="admin_restock_keys")],
-            [InlineKeyboardButton("🔙 Back to Product Menu", callback_data="admin_products")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        summary = f"✅ Successfully added {added_count} keys to {product.name}!"
-        if skipped:
-            summary += f"\n⏭ Skipped {skipped} duplicate key(s)."
-        summary += f"\nNew stock count: {product.stock_count}"
-
-        await update.message.reply_text(summary, reply_markup=reply_markup)
-
-        # Clear restock_product_id from context
+    if result is None:
+        await update.message.reply_text("❌ Product not found.")
         context.user_data.pop('restock_product_id', None)
-
         return ConversationHandler.END
+
+    product_name, added_count, skipped, new_stock = result
+
+    # Create keyboard with options
+    keyboard = [
+        [InlineKeyboardButton("🔄 Restock More Keys", callback_data="admin_restock_keys")],
+        [InlineKeyboardButton("🔙 Back to Product Menu", callback_data="admin_products")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    summary = f"✅ Successfully added {added_count} keys to {product_name}!"
+    if skipped:
+        summary += f"\n⏭ Skipped {skipped} duplicate key(s)."
+    summary += f"\nNew stock count: {new_stock}"
+
+    await update.message.reply_text(summary, reply_markup=reply_markup)
+
+    # Clear restock_product_id from context
+    context.user_data.pop('restock_product_id', None)
+
+    return ConversationHandler.END
 
 
 async def handle_restock_keys_paste(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -842,67 +858,33 @@ async def handle_restock_keys_paste(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text("❌ Error: Product not selected. Please start over.")
         return ConversationHandler.END
 
-    # Add keys to product_keys table
-    with get_db_session() as session:
-        product = session.query(Product).filter_by(id=product_id).first()
+    result = await asyncio.to_thread(_restock_keys_sync, product_id, keys, update.effective_user.id)
 
-        if not product:
-            await update.message.reply_text("❌ Product not found.")
-            context.user_data.pop('restock_product_id', None)
-            return ConversationHandler.END
-
-        # Skip keys that already exist for this product, so a re-uploaded file
-        # cannot inflate stock with duplicates that would be delivered twice.
-        existing = {
-            k[0] for k in session.query(ProductKey.key_value)
-            .filter_by(product_id=product.id).all()
-        }
-        added_count = 0
-        skipped = 0
-        for key_value in keys:
-            if key_value in existing:
-                skipped += 1
-                continue
-            existing.add(key_value)
-            session.add(ProductKey(
-                product_id=product.id,
-                key_value=key_value,
-                is_sold=False
-            ))
-            added_count += 1
-
-        # Keep stock in sync with the real unsold-key count. The newly added
-        # keys above are already in this count: session.query() autoflushes
-        # pending session.add() calls before running, so they're already in
-        # the DB by the time count() runs - adding + added_count on top of
-        # that used to double-count every restock.
-        product.stock_count = session.query(ProductKey).filter_by(
-            product_id=product.id, is_sold=False
-        ).count()
-        log_admin_action(session, update.effective_user.id, "restock_keys",
-                          target_type="product", target_id=product.id,
-                          details=f"added={added_count}, skipped_duplicates={skipped}")
-        session.commit()
-
-        # Create keyboard with options
-        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-        keyboard = [
-            [InlineKeyboardButton("🔄 Restock More Keys", callback_data="admin_restock_keys")],
-            [InlineKeyboardButton("🔙 Back to Product Menu", callback_data="admin_products")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        summary = f"✅ Successfully added {added_count} keys to {product.name}!"
-        if skipped:
-            summary += f"\n⏭ Skipped {skipped} duplicate key(s)."
-        summary += f"\nNew stock count: {product.stock_count}"
-
-        await update.message.reply_text(summary, reply_markup=reply_markup)
-
-        # Clear restock_product_id from context
+    if result is None:
+        await update.message.reply_text("❌ Product not found.")
         context.user_data.pop('restock_product_id', None)
-
         return ConversationHandler.END
+
+    product_name, added_count, skipped, new_stock = result
+
+    # Create keyboard with options
+    keyboard = [
+        [InlineKeyboardButton("🔄 Restock More Keys", callback_data="admin_restock_keys")],
+        [InlineKeyboardButton("🔙 Back to Product Menu", callback_data="admin_products")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    summary = f"✅ Successfully added {added_count} keys to {product_name}!"
+    if skipped:
+        summary += f"\n⏭ Skipped {skipped} duplicate key(s)."
+    summary += f"\nNew stock count: {new_stock}"
+
+    await update.message.reply_text(summary, reply_markup=reply_markup)
+
+    # Clear restock_product_id from context
+    context.user_data.pop('restock_product_id', None)
+
+    return ConversationHandler.END
 
 
 async def _render_order_detail(query, order_id: int):
@@ -912,60 +894,69 @@ async def _render_order_detail(query, order_id: int):
     callback query can refresh the view without calling query.answer() twice
     (Telegram rejects the second answer).
     """
-    with get_db_session() as session:
-        order = session.query(Order).filter_by(id=order_id).first()
+    def _sync():
+        with get_db_session() as session:
+            order = session.query(Order).filter_by(id=order_id).first()
 
-        if not order:
-            await query.edit_message_text(
-                "❌ Order not found.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="admin_view_orders")]])
-            )
-            return
+            if not order:
+                return None
 
-        user = session.query(User).filter_by(id=order.user_id).first()
-        order_items = session.query(OrderItem).filter_by(order_id=order.id).all()
+            user = session.query(User).filter_by(id=order.user_id).first()
+            order_items = session.query(OrderItem).filter_by(order_id=order.id).all()
 
-        status_emoji = {
-            OrderStatus.PROCESSING: "⏳",
-            OrderStatus.COMPLETED: "✅",
-            OrderStatus.CANCELLED: "❌"
-        }.get(order.status, "❓")
+            status_emoji = {
+                OrderStatus.PROCESSING: "⏳",
+                OrderStatus.COMPLETED: "✅",
+                OrderStatus.CANCELLED: "❌"
+            }.get(order.status, "❓")
 
-        username = user.username if user and user.username else f"ID:{user.telegram_id if user else 'Unknown'}"
-        message = "📋 Order Details\n\n"
-        message += f"Order ID: #{order.id}\n"
-        message += f"Status: {status_emoji} {order.status.value}\n"
-        message += f"User: @{username} ({user.telegram_id if user else 'Unknown'})\n"
-        message += f"Date: {order.created_at.strftime('%Y-%m-%d %H:%M')}\n"
-        message += f"Total: {format_price(order.total_amount)}\n\n"
+            username = user.username if user and user.username else f"ID:{user.telegram_id if user else 'Unknown'}"
+            message = "📋 Order Details\n\n"
+            message += f"Order ID: #{order.id}\n"
+            message += f"Status: {status_emoji} {order.status.value}\n"
+            message += f"User: @{username} ({user.telegram_id if user else 'Unknown'})\n"
+            message += f"Date: {order.created_at.strftime('%Y-%m-%d %H:%M')}\n"
+            message += f"Total: {format_price(order.total_amount)}\n\n"
 
-        message += "📦 Items:\n"
-        for item in order_items:
-            product = session.query(Product).filter_by(id=item.product_id).first()
-            product_name = product.name if product else "Unknown Product"
-            message += f"• {product_name} x{item.quantity} = {format_price(item.price * item.quantity)}\n"
+            message += "📦 Items:\n"
+            for item in order_items:
+                product = session.query(Product).filter_by(id=item.product_id).first()
+                product_name = product.name if product else "Unknown Product"
+                message += f"• {product_name} x{item.quantity} = {format_price(item.price * item.quantity)}\n"
 
-            if item.delivered_asset:
-                if product and product.product_type == ProductType.KEY:
-                    message += f"  🔐 Keys:\n{item.delivered_asset}\n"
-                elif product and product.product_type == ProductType.FILE:
-                    message += f"  🔗 Download: {item.delivered_asset}\n"
-                message += "\n"
+                if item.delivered_asset:
+                    if product and product.product_type == ProductType.KEY:
+                        message += f"  🔐 Keys:\n{item.delivered_asset}\n"
+                    elif product and product.product_type == ProductType.FILE:
+                        message += f"  🔗 Download: {item.delivered_asset}\n"
+                    message += "\n"
 
-        keyboard = []
-        if order.status == OrderStatus.PROCESSING:
-            keyboard.append([InlineKeyboardButton("✅ Mark as Completed", callback_data=f"complete_order_{order.id}")])
-            keyboard.append([InlineKeyboardButton("❌ Cancel Order", callback_data=f"cancel_order_{order.id}")])
-        elif order.status == OrderStatus.CANCELLED:
-            keyboard.append([InlineKeyboardButton("🔄 Reactivate Order", callback_data=f"reactivate_order_{order.id}")])
+            keyboard = []
+            if order.status == OrderStatus.PROCESSING:
+                keyboard.append([InlineKeyboardButton("✅ Mark as Completed", callback_data=f"complete_order_{order.id}")])
+                keyboard.append([InlineKeyboardButton("❌ Cancel Order", callback_data=f"cancel_order_{order.id}")])
+            elif order.status == OrderStatus.CANCELLED:
+                keyboard.append([InlineKeyboardButton("🔄 Reactivate Order", callback_data=f"reactivate_order_{order.id}")])
 
-        keyboard.append([InlineKeyboardButton("🔙 Back to Orders", callback_data="admin_view_orders")])
+            keyboard.append([InlineKeyboardButton("🔙 Back to Orders", callback_data="admin_view_orders")])
 
-        try:
-            await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
-        except Exception:
-            # Same content as before -> Telegram returns "message is not modified"
-            pass
+            return message, InlineKeyboardMarkup(keyboard)
+
+    result = await asyncio.to_thread(_sync)
+
+    if result is None:
+        await query.edit_message_text(
+            "❌ Order not found.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="admin_view_orders")]])
+        )
+        return
+
+    message, reply_markup = result
+    try:
+        await query.edit_message_text(message, reply_markup=reply_markup)
+    except Exception:
+        # Same content as before -> Telegram returns "message is not modified"
+        pass
 
 
 async def admin_order_detail_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1005,30 +996,41 @@ async def admin_reactivate_order_callback(update: Update, context: ContextTypes.
         await query.answer("❌ Invalid request.", show_alert=True)
         return
 
-    with get_db_session() as session:
-        order = session.query(Order).filter_by(id=order_id).first()
-        if not order:
-            await query.answer("❌ Order not found.", show_alert=True)
-            return
-        if order.status != OrderStatus.CANCELLED:
-            await query.answer("⚠️ Only cancelled orders can be reactivated.", show_alert=True)
-            return
+    def _sync():
+        with get_db_session() as session:
+            order = session.query(Order).filter_by(id=order_id).first()
+            if not order:
+                return "not_found"
+            if order.status != OrderStatus.CANCELLED:
+                return "not_cancelled"
 
-        user = session.query(User).filter_by(id=order.user_id).first()
-        if not user or user.wallet_balance < order.total_amount:
-            await query.answer(
-                "❌ Cannot reactivate: the refund is no longer available in the user's wallet.",
-                show_alert=True
-            )
-            return
+            user = session.query(User).filter_by(id=order.user_id).first()
+            if not user or user.wallet_balance < order.total_amount:
+                return "insufficient"
 
-        # Take the refunded money back out and restore the order.
-        user.wallet_balance = to_money(user.wallet_balance - order.total_amount)
-        order.status = OrderStatus.PROCESSING
-        log_admin_action(session, update.effective_user.id, "reactivate_order",
-                          target_type="order", target_id=order.id,
-                          details=f"amount={order.total_amount}")
-        session.commit()
+            # Take the refunded money back out and restore the order.
+            user.wallet_balance = to_money(user.wallet_balance - order.total_amount)
+            order.status = OrderStatus.PROCESSING
+            log_admin_action(session, update.effective_user.id, "reactivate_order",
+                              target_type="order", target_id=order.id,
+                              details=f"amount={order.total_amount}")
+            session.commit()
+            return "ok"
+
+    result = await asyncio.to_thread(_sync)
+
+    if result == "not_found":
+        await query.answer("❌ Order not found.", show_alert=True)
+        return
+    if result == "not_cancelled":
+        await query.answer("⚠️ Only cancelled orders can be reactivated.", show_alert=True)
+        return
+    if result == "insufficient":
+        await query.answer(
+            "❌ Cannot reactivate: the refund is no longer available in the user's wallet.",
+            show_alert=True
+        )
+        return
 
     await query.answer("✅ Order reactivated.", show_alert=True)
     await _render_order_detail(query, order_id)
@@ -1057,22 +1059,31 @@ async def admin_complete_order_callback(update: Update, context: ContextTypes.DE
         await query.edit_message_text("❌ Invalid request.")
         return
 
-    with get_db_session() as session:
-        order = session.query(Order).filter_by(id=order_id).first()
+    def _sync():
+        with get_db_session() as session:
+            order = session.query(Order).filter_by(id=order_id).first()
 
-        if not order:
-            await query.edit_message_text("❌ Order not found.")
-            return
+            if not order:
+                return "not_found"
 
-        if order.status == OrderStatus.COMPLETED:
-            await query.edit_message_text("ℹ️ Order is already completed.")
-            return
+            if order.status == OrderStatus.COMPLETED:
+                return "already"
 
-        order.status = OrderStatus.COMPLETED
-        order.completed_at = datetime.utcnow()
-        log_admin_action(session, update.effective_user.id, "complete_order",
-                          target_type="order", target_id=order.id)
-        session.commit()
+            order.status = OrderStatus.COMPLETED
+            order.completed_at = datetime.utcnow()
+            log_admin_action(session, update.effective_user.id, "complete_order",
+                              target_type="order", target_id=order.id)
+            session.commit()
+            return "ok"
+
+    result = await asyncio.to_thread(_sync)
+
+    if result == "not_found":
+        await query.edit_message_text("❌ Order not found.")
+        return
+    if result == "already":
+        await query.edit_message_text("ℹ️ Order is already completed.")
+        return
 
     # NOTE: query.answer() was already called at the top of this handler;
     # calling it twice raises. Render the refreshed detail view instead.
@@ -1084,40 +1095,48 @@ async def _render_pending_txn_menu(query, action: str):
     is_confirm = action == "confirm"
     prefix = "confirm_payment_" if is_confirm else "cancel_payment_"
 
-    with get_db_session() as session:
-        transactions = session.query(Transaction).filter_by(
-            status=TransactionStatus.PENDING
-        ).order_by(Transaction.created_at.desc()).all()
+    def _sync():
+        with get_db_session() as session:
+            transactions = session.query(Transaction).filter_by(
+                status=TransactionStatus.PENDING
+            ).order_by(Transaction.created_at.desc()).all()
 
-        back = [[InlineKeyboardButton("🔙 Back to Orders", callback_data="admin_orders")]]
+            rows = []
+            for txn in transactions:
+                user = session.query(User).filter_by(id=txn.user_id).first()
+                username = user.username if user and user.username else f"ID:{user.telegram_id if user else 'Unknown'}"
+                rows.append((txn.id, username, txn.amount, txn.payment_method.value))
+            return rows
 
-        if not transactions:
-            text = "✅ No pending payments to confirm." if is_confirm else "✅ No pending payments to cancel."
-            try:
-                await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(back))
-            except Exception:
-                pass
-            return
+    rows = await asyncio.to_thread(_sync)
 
-        keyboard = []
-        for txn in transactions:
-            user = session.query(User).filter_by(id=txn.user_id).first()
-            username = user.username if user and user.username else f"ID:{user.telegram_id if user else 'Unknown'}"
-            payment_method = txn.payment_method.value.replace('_', ' ').title()
-            button_text = f"⏳ Txn #{txn.id} | @{username} | {format_price(txn.amount)} | {payment_method}"
-            keyboard.append([InlineKeyboardButton(button_text, callback_data=f"{prefix}{txn.id}")])
+    back = [[InlineKeyboardButton("🔙 Back to Orders", callback_data="admin_orders")]]
 
-        keyboard += back
-
-        if is_confirm:
-            message = f"✅ Manual Payment Confirmation ({len(transactions)} pending)\n\nSelect a transaction to confirm:"
-        else:
-            message = f"❌ Cancel Payments ({len(transactions)} pending)\n\nSelect a transaction to cancel:"
-
+    if not rows:
+        text = "✅ No pending payments to confirm." if is_confirm else "✅ No pending payments to cancel."
         try:
-            await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(back))
         except Exception:
             pass
+        return
+
+    keyboard = []
+    for txn_id, username, amount, payment_method_value in rows:
+        payment_method = payment_method_value.replace('_', ' ').title()
+        button_text = f"⏳ Txn #{txn_id} | @{username} | {format_price(amount)} | {payment_method}"
+        keyboard.append([InlineKeyboardButton(button_text, callback_data=f"{prefix}{txn_id}")])
+
+    keyboard += back
+
+    if is_confirm:
+        message = f"✅ Manual Payment Confirmation ({len(rows)} pending)\n\nSelect a transaction to confirm:"
+    else:
+        message = f"❌ Cancel Payments ({len(rows)} pending)\n\nSelect a transaction to cancel:"
+
+    try:
+        await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
+    except Exception:
+        pass
 
 
 async def admin_confirm_order_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1158,34 +1177,41 @@ async def admin_confirm_payment_callback(update: Update, context: ContextTypes.D
         await query.answer("❌ Invalid request.", show_alert=True)
         return
 
-    notify = None
+    def _sync():
+        with get_db_session() as session:
+            txn = session.query(Transaction).filter_by(id=txn_id).first()
 
-    with get_db_session() as session:
-        txn = session.query(Transaction).filter_by(id=txn_id).first()
+            if not txn:
+                return "not_found", None
 
-        if not txn:
-            await query.answer("❌ Transaction not found.", show_alert=True)
-            return
+            if txn.status != TransactionStatus.PENDING:
+                return "already", txn.status.value
 
-        if txn.status != TransactionStatus.PENDING:
-            await query.answer(f"⚠️ Transaction is already {txn.status.value}", show_alert=True)
-            return
+            user = session.query(User).filter_by(id=txn.user_id).first()
+            if user:
+                user.wallet_balance = to_money(user.wallet_balance + txn.amount)
 
-        user = session.query(User).filter_by(id=txn.user_id).first()
-        if user:
-            user.wallet_balance = to_money(user.wallet_balance + txn.amount)
+            txn.status = TransactionStatus.COMPLETED
+            txn.completed_at = datetime.utcnow()
+            log_admin_action(session, update.effective_user.id, "confirm_payment",
+                              target_type="transaction", target_id=txn.id,
+                              details=f"amount={txn.amount}")
+            session.commit()
 
-        txn.status = TransactionStatus.COMPLETED
-        txn.completed_at = datetime.utcnow()
-        log_admin_action(session, update.effective_user.id, "confirm_payment",
-                          target_type="transaction", target_id=txn.id,
-                          details=f"amount={txn.amount}")
-        session.commit()
+            amount = txn.amount
+            notify = (user.telegram_id, amount, user.wallet_balance) if user else None
+            return "ok", (amount, notify)
 
-        amount = txn.amount
-        if user:
-            notify = (user.telegram_id, amount, user.wallet_balance)
+    status, payload = await asyncio.to_thread(_sync)
 
+    if status == "not_found":
+        await query.answer("❌ Transaction not found.", show_alert=True)
+        return
+    if status == "already":
+        await query.answer(f"⚠️ Transaction is already {payload}", show_alert=True)
+        return
+
+    amount, notify = payload
     await query.answer(f"✅ Payment confirmed! {format_price(amount)} added to user's wallet.", show_alert=True)
 
     if notify:
@@ -1215,33 +1241,39 @@ async def admin_cancel_payment_callback(update: Update, context: ContextTypes.DE
         await query.answer("❌ Invalid request.", show_alert=True)
         return
 
-    notify = None
+    def _sync():
+        with get_db_session() as session:
+            txn = session.query(Transaction).filter_by(id=txn_id).first()
 
-    with get_db_session() as session:
-        txn = session.query(Transaction).filter_by(id=txn_id).first()
+            if not txn:
+                return "not_found", None
 
-        if not txn:
-            await query.answer("❌ Transaction not found.", show_alert=True)
-            return
+            if txn.status != TransactionStatus.PENDING:
+                return "already", txn.status.value
 
-        if txn.status != TransactionStatus.PENDING:
-            await query.answer(f"⚠️ Transaction is already {txn.status.value}", show_alert=True)
-            return
+            txn.status = TransactionStatus.FAILED
+            log_admin_action(session, update.effective_user.id, "cancel_payment",
+                              target_type="transaction", target_id=txn.id,
+                              details=f"amount={txn.amount}")
+            session.commit()
 
-        txn.status = TransactionStatus.FAILED
-        log_admin_action(session, update.effective_user.id, "cancel_payment",
-                          target_type="transaction", target_id=txn.id,
-                          details=f"amount={txn.amount}")
-        session.commit()
+            user = session.query(User).filter_by(id=txn.user_id).first()
+            notify = (user.telegram_id, txn.amount) if user else None
+            return "ok", notify
 
-        user = session.query(User).filter_by(id=txn.user_id).first()
-        if user:
-            notify = (user.telegram_id, txn.amount)
+    status, payload = await asyncio.to_thread(_sync)
+
+    if status == "not_found":
+        await query.answer("❌ Transaction not found.", show_alert=True)
+        return
+    if status == "already":
+        await query.answer(f"⚠️ Transaction is already {payload}", show_alert=True)
+        return
 
     await query.answer("✅ Payment cancelled!", show_alert=True)
 
-    if notify:
-        telegram_id, amount = notify
+    if payload:
+        telegram_id, amount = payload
         try:
             await context.bot.send_message(
                 chat_id=telegram_id,
@@ -1271,45 +1303,51 @@ async def admin_cancel_order_callback(update: Update, context: ContextTypes.DEFA
         await query.edit_message_text("❌ Invalid request.")
         return
 
-    notify = None
+    def _sync():
+        with get_db_session() as session:
+            order = session.query(Order).filter_by(id=order_id).first()
 
-    with get_db_session() as session:
-        order = session.query(Order).filter_by(id=order_id).first()
+            if not order:
+                return "not_found", None
 
-        if not order:
-            await query.edit_message_text("❌ Order not found.")
-            return
+            # Guard: without this, every click on the button refunded the order
+            # amount again.
+            if order.status == OrderStatus.CANCELLED:
+                return "already", None
 
-        # Guard: without this, every click on the button refunded the order
-        # amount again.
-        if order.status == OrderStatus.CANCELLED:
-            await query.edit_message_text("ℹ️ Order is already cancelled — no refund issued.")
-            return
+            # Refund user
+            user = session.query(User).filter_by(id=order.user_id).first()
+            if user:
+                user.wallet_balance = to_money(user.wallet_balance + order.total_amount)
 
-        # Refund user
-        user = session.query(User).filter_by(id=order.user_id).first()
-        if user:
-            user.wallet_balance = to_money(user.wallet_balance + order.total_amount)
+            # Return the keys that were assigned to this order back to stock.
+            returned_keys = session.query(ProductKey).filter_by(order_id=order.id, is_sold=True).all()
+            for key in returned_keys:
+                key.is_sold = False
+                key.order_id = None
+                key.sold_at = None
+                product = session.query(Product).filter_by(id=key.product_id).first()
+                if product:
+                    product.stock_count += 1
 
-        # Return the keys that were assigned to this order back to stock.
-        returned_keys = session.query(ProductKey).filter_by(order_id=order.id, is_sold=True).all()
-        for key in returned_keys:
-            key.is_sold = False
-            key.order_id = None
-            key.sold_at = None
-            product = session.query(Product).filter_by(id=key.product_id).first()
-            if product:
-                product.stock_count += 1
+            # Mark order as cancelled
+            order.status = OrderStatus.CANCELLED
+            log_admin_action(session, update.effective_user.id, "cancel_order",
+                              target_type="order", target_id=order.id,
+                              details=f"refund={order.total_amount}, keys_returned={len(returned_keys)}")
+            session.commit()
 
-        # Mark order as cancelled
-        order.status = OrderStatus.CANCELLED
-        log_admin_action(session, update.effective_user.id, "cancel_order",
-                          target_type="order", target_id=order.id,
-                          details=f"refund={order.total_amount}, keys_returned={len(returned_keys)}")
-        session.commit()
+            notify = (user.telegram_id, order.id, order.total_amount) if user else None
+            return "ok", notify
 
-        if user:
-            notify = (user.telegram_id, order.id, order.total_amount)
+    status, notify = await asyncio.to_thread(_sync)
+
+    if status == "not_found":
+        await query.edit_message_text("❌ Order not found.")
+        return
+    if status == "already":
+        await query.edit_message_text("ℹ️ Order is already cancelled — no refund issued.")
+        return
 
     if notify:
         telegram_id, oid, amount = notify
@@ -1323,8 +1361,6 @@ async def admin_cancel_order_callback(update: Update, context: ContextTypes.DEFA
 
     # Refresh order details (query.answer() already fired above)
     await _render_order_detail(query, order_id)
-
-
 
 
 async def cancel_restock(update: Update, context: ContextTypes.DEFAULT_TYPE):
