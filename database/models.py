@@ -190,7 +190,14 @@ class OrderItem(Base):
 
     id = Column(Integer, primary_key=True)
     order_id = Column(Integer, ForeignKey('orders.id'), nullable=False, index=True)
-    product_id = Column(Integer, ForeignKey('products.id'), nullable=False)
+    # Nullable on purpose: an admin can delete a product that has already been
+    # ordered, and the order line must survive that (it is the customer's
+    # receipt). The display code on both sides already expects this - see
+    # user_handlers.user_order_detail_callback ("Deleted product") and
+    # admin_handlers._render_order_detail ("Unknown Product"). The line keeps
+    # its own name-independent record: quantity, price paid, and the delivered
+    # keys/link in delivered_asset.
+    product_id = Column(Integer, ForeignKey('products.id'), nullable=True)
     quantity = Column(Integer, nullable=False)
     price = Column(Money, nullable=False)
     delivered_asset = Column(Text, nullable=True)  # Keys or download link

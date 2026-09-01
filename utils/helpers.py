@@ -46,34 +46,6 @@ def admin_only(func):
     return wrapper
 
 
-def get_or_create_user(telegram_id: int, username: str = None) -> dict:
-    """Get existing user or create a new one, returned as a plain dict.
-
-    Returning the ORM object was unsafe: the session is closed by the context
-    manager, so every later attribute access raised DetachedInstanceError.
-    """
-    with get_db_session() as session:
-        user = session.query(User).filter_by(telegram_id=telegram_id).first()
-
-        if not user:
-            user = User(telegram_id=telegram_id, username=username)
-            session.add(user)
-            session.commit()
-            session.refresh(user)
-        elif username and user.username != username:
-            # Keep the cached username in sync when the person renames themselves.
-            user.username = username
-            session.commit()
-
-        return {
-            'id': user.id,
-            'telegram_id': user.telegram_id,
-            'username': user.username,
-            'wallet_balance': user.wallet_balance,
-            'is_banned': user.is_banned,
-        }
-
-
 def format_price(price) -> str:
     """Format a money value (Decimal, float or int) to standard USD format."""
     return f"${to_money(price):.2f}"

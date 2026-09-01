@@ -760,15 +760,37 @@ async def edit_select_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data == "edit_delete":
         def _sync():
             with get_db_session() as session:
-                from database import Cart, ProductKey
+                from database import Cart, OrderItem, ProductKey
                 product = session.query(Product).filter_by(id=product_id).first()
                 prod_name = product.name
 
                 # Delete associated cart items
                 session.query(Cart).filter_by(product_id=product.id).delete()
-                # Delete only unsold product keys (sold keys remain for order history)
-                session.query(ProductKey).filter_by(product_id=product.id, is_sold=False).delete()
-                # Delete the product (order items remain with orphaned product_id)
+
+                # Detach the order lines instead of letting them go with the
+                # product: they are the customers' receipts. Each keeps its
+                # quantity, the price actually paid and the delivered
+                # keys/link in delivered_asset, and both order-detail views
+                # already render a missing product as "Deleted product" /
+                # "Unknown Product". Doing this explicitly (rather than
+                # leaving it to SQLAlchemy's implicit FK nulling on delete)
+                # keeps it a single UPDATE and makes the intent visible.
+                session.query(OrderItem).filter_by(product_id=product.id).update(
+                    {"product_id": None}, synchronize_session=False
+                )
+
+                # Drop the whole key inventory for this product, sold rows
+                # included. Product.product_keys cascades delete-orphan, so
+                # session.delete(product) below would remove them regardless -
+                # and the keys the customer actually received are not lost
+                # with them: confirm_purchase copies the key text into
+                # OrderItem.delivered_asset at sale time, which is what the
+                # order history renders from.
+                session.query(ProductKey).filter_by(product_id=product.id).delete(
+                    synchronize_session=False
+                )
+
+                session.expire(product, ['order_items', 'product_keys'])
                 session.delete(product)
                 session.commit()
                 return prod_name
@@ -776,7 +798,8 @@ async def edit_select_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
         prod_name = await asyncio.to_thread(_sync)
         await query.edit_message_text(
             f"✅ Product '{prod_name}' deleted successfully!\n\n"
-            f"Note: Order history is preserved.",
+            f"Note: past orders keep their items, prices and delivered keys - "
+            f"they now show the product as \"Deleted product\".",
             reply_markup=create_admin_product_menu_keyboard()
         )
         context.user_data.clear()

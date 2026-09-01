@@ -81,7 +81,7 @@ library - keeping the fakes in one place is what makes them reusable.
   round-half-to-even `round()`), and `money_or_none()` when the input
   might not parse. See `utils/money.py`'s docstring for why.
 - Logging, not `print()` - the app's runtime code (everything except the
-  standalone scripts `check_invoice.py` and `migrations/categorynullable.py`)
+  standalone `check_invoice.py` debug script)
   logs through the standard `logging` module so Railway's log level
   filtering applies uniformly, and so Sentry (when `SENTRY_DSN` is set -
   see `config/monitoring.py`) picks up every `logger.error()`/

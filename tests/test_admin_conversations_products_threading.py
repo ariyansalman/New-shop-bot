@@ -141,19 +141,14 @@ async def test_edit_select_field_clear_keys_noop_when_none_unsold():
     assert "no unsold keys" in query.last_edit_text
 
 
-async def test_edit_select_field_delete_actually_removes_sold_keys_too():
-    """Documents actual behavior, not the code's own claim.
+async def test_edit_select_field_delete_removes_key_inventory():
+    """The whole key inventory goes with the product, sold rows included.
 
-    handle_select_field's "edit_delete" branch explicitly bulk-deletes only
-    unsold keys before session.delete(product), with a comment saying sold
-    keys "remain for order history" - but Product.product_keys carries
-    cascade="all, delete-orphan" (database/models.py), so the ORM's
-    session.delete(product) cascades and removes every ProductKey row for
-    that product anyway, sold ones included. This is a pre-existing bug
-    (present before this refactor, unrelated to asyncio.to_thread), not a
-    regression - this test pins the real behavior so a future fix has a
-    test to flip red->green against, rather than silently leaving both the
-    comment and the assumption of preserved order-history evidence wrong.
+    Product.product_keys cascades delete-orphan, so session.delete(product)
+    removes every ProductKey row regardless - and that is fine: the keys a
+    customer actually received were copied into OrderItem.delivered_asset
+    at sale time (see confirm_purchase), which is what order history
+    renders from. These rows are inventory bookkeeping, not the receipt.
     """
     product_id = make_product()
     with get_db_session() as session:
@@ -171,6 +166,62 @@ async def test_edit_select_field_delete_actually_removes_sold_keys_too():
         assert session.query(ProductKey).filter_by(product_id=product_id).count() == 0
 
     assert "deleted successfully" in query.last_edit_text
+
+
+async def test_delete_product_with_order_history_keeps_the_receipt():
+    """Regression: this used to crash and silently do nothing.
+
+    session.delete(product) made SQLAlchemy null out order_items.product_id,
+    which was NOT NULL -> IntegrityError. The handler had already called
+    query.answer(), so the global error handler could not answer it a
+    second time either and the admin saw no message at all - the button
+    just looked dead for any product that had ever been sold.
+
+    order_items.product_id is nullable now (migration b7c41a9d2e10) and the
+    handler detaches the lines explicitly, so the order line survives as
+    the customer's receipt with its quantity, price paid and delivered keys.
+    """
+    from database import User, Order, OrderItem, OrderStatus
+
+    with get_db_session() as session:
+        user = User(telegram_id=424242, wallet_balance=Decimal("0"))
+        session.add(user)
+        session.flush()
+        product = Product(
+            name="Sold Widget", price=Decimal("9.99"), stock_count=1,
+            product_type=ProductType.KEY, is_active=True,
+        )
+        session.add(product)
+        session.flush()
+        order = Order(user_id=user.id, total_amount=Decimal("9.99"), status=OrderStatus.COMPLETED)
+        session.add(order)
+        session.flush()
+        session.add(OrderItem(
+            order_id=order.id, product_id=product.id, quantity=1,
+            price=Decimal("9.99"), delivered_asset="KEY-ABC-123",
+        ))
+        session.add(ProductKey(product_id=product.id, key_value="KEY-ABC-123",
+                               is_sold=True, order_id=order.id))
+        product_id, order_id = product.id, order.id
+
+    query = FakeQuery(data="edit_delete", user_id=ADMIN_ID)
+    update = FakeUpdate(query, ADMIN_ID)
+    context = FakeContext()
+    context.user_data['edit_product_id'] = product_id
+
+    await edit_select_field(update, context)
+
+    # The admin gets a real confirmation, not silence.
+    assert "deleted successfully" in query.last_edit_text
+
+    with get_db_session() as session:
+        assert session.query(Product).filter_by(id=product_id).first() is None
+
+        item = session.query(OrderItem).filter_by(order_id=order_id).one()
+        assert item.product_id is None          # detached, not deleted
+        assert item.price == Decimal("9.99")    # what the customer paid
+        assert item.quantity == 1
+        assert item.delivered_asset == "KEY-ABC-123"  # what they received
 
 
 async def test_edit_new_value_price_updates_with_audit_log():

@@ -159,8 +159,15 @@ async def admin_select_product_restock_callback(update: Update, context: Context
 
     await query.answer()
 
-    # Extract product ID from callback data
-    product_id = int(query.data.split("_")[2])
+    # Extract product ID from callback data. Every other handler in this file
+    # guards this parse; this one didn't, so malformed data raised inside the
+    # handler and - because query.answer() has already fired above - the
+    # global error handler could not report it either.
+    try:
+        product_id = int(query.data.split("_")[2])
+    except (ValueError, IndexError):
+        await query.edit_message_text("❌ Invalid request.")
+        return ConversationHandler.END
 
     # Store product ID in context for later use
     context.user_data['restock_product_id'] = product_id

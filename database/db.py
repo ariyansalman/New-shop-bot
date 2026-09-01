@@ -6,8 +6,9 @@ thread-safety flags, PostgreSQL needs pool sizing and keepalives.
 """
 
 import logging
+import os
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.pool import NullPool
@@ -77,17 +78,62 @@ SessionFactory = sessionmaker(bind=engine)
 Session = scoped_session(SessionFactory)
 
 
+def _stamp_alembic_head():
+    """Record that a freshly created schema is already at the latest revision.
+
+    create_all() builds the current models directly, so the schema matches
+    head - but Alembic doesn't know that, and would then try to run the
+    baseline migration's CREATE TABLEs against tables that already exist
+    ("table broadcasts already exists"), leaving migrations permanently
+    stuck for that database. Stamping closes that gap.
+    """
+    from alembic import command
+    from alembic.config import Config
+
+    alembic_ini = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "alembic.ini"
+    )
+    if not os.path.exists(alembic_ini):
+        logger.warning("alembic.ini not found - skipping stamp of the new database")
+        return
+
+    cfg = Config(alembic_ini)
+    # env.py reads the URL from settings, but set it explicitly so a stamp
+    # can never land on a different database than the one just created.
+    cfg.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+    command.stamp(cfg, "head")
+    logger.info("New database stamped at Alembic head")
+
+
 def init_db():
     """Create any missing tables.
 
     Safe to run on every boot: create_all() only creates what does not exist.
     It does NOT alter existing tables - that's what the Alembic migrations in
     alembic/versions/ are for (run via `alembic upgrade head`, which Railway
-    does automatically as a release step; see DEPLOY.md). This function stays
-    mainly as a dev convenience for a brand-new empty database.
+    does automatically as a release step; see DEPLOY.md).
+
+    When the database is completely empty, this also stamps it at Alembic
+    head. Without that, `python app.py` on a fresh database (local dev, or
+    a Docker run that skips the migration step) left an unstamped schema
+    that every later `alembic upgrade head` failed against.
     """
+    inspector = inspect(engine)
+    # alembic_version alone doesn't count: an existing database that predates
+    # Alembic has tables but no version row, and stamping that one blind
+    # could skip migrations it genuinely still needs.
+    fresh = not inspector.has_table("users") and not inspector.has_table("alembic_version")
+
     Base.metadata.create_all(engine)
     logger.info("Database tables created successfully")
+
+    if fresh:
+        try:
+            _stamp_alembic_head()
+        except Exception:
+            # Not fatal: the schema is correct either way, and `alembic stamp
+            # head` can still be run by hand (see DEPLOY.md).
+            logger.exception("Could not stamp the new database at Alembic head")
 
 
 def check_connection() -> bool:

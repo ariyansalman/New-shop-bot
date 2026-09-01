@@ -165,10 +165,18 @@ class CryptoBotService:
             # Extract invoice_id from stored format
             invoice_id = None
 
+            # A PENDING transaction can legitimately have no address yet: the
+            # row is committed before the createInvoice call, so a crash in
+            # between leaves one behind. Without this guard the `in` test
+            # below raises TypeError on None and the poller logged a fresh
+            # traceback for that row every PAYMENT_CHECK_INTERVAL seconds.
+            if not crypto_address:
+                logger.debug("Transaction has no invoice address yet - nothing to check")
+                return False
+
             # Format 1: "invoice_id|pay_url" (NEW FORMAT - numeric invoice_id)
             if "|" in crypto_address:
                 invoice_id = crypto_address.split("|")[0]
-                pass
             # Format 2: Old format - just URL (can't verify these, need to be manually confirmed)
             elif "https://t.me/CryptoBot" in crypto_address or "?start=" in crypto_address:
                 logger.warning("Old URL-only invoice format; admin must confirm manually")

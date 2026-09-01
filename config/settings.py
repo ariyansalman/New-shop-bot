@@ -51,6 +51,25 @@ def _as_bool(value, default: bool = False) -> bool:
     return value.strip().lower() in ('1', 'true', 'yes', 'on')
 
 
+def _as_number(name: str, default, cast):
+    """Read a numeric env var, falling back to the default on garbage.
+
+    A typo'd value (DB_POOL_SIZE=five) used to raise a bare ValueError while
+    this module was still being imported, so the bot died before any of the
+    readable configuration errors in validate_settings() could run - and the
+    traceback pointed at settings.py rather than at the variable. Same
+    treatment ADMIN_TELEGRAM_ID already got.
+    """
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == '':
+        return default
+    try:
+        return cast(raw)
+    except ValueError:
+        logger.warning("%s=%r is not a valid number - falling back to %r", name, raw, default)
+        return default
+
+
 class Settings:
     """Stores all configuration settings for the bot."""
 
@@ -92,11 +111,11 @@ class Settings:
 
     # Connection pool sizing. Supabase allows a limited number of concurrent
     # connections, so keep the pool small.
-    DB_POOL_SIZE = int(os.getenv('DB_POOL_SIZE', 5))
-    DB_MAX_OVERFLOW = int(os.getenv('DB_MAX_OVERFLOW', 5))
+    DB_POOL_SIZE = _as_number('DB_POOL_SIZE', 5, int)
+    DB_MAX_OVERFLOW = _as_number('DB_MAX_OVERFLOW', 5, int)
     # Recycle below any server/proxy idle timeout so we never hand out a
     # connection the server has already closed.
-    DB_POOL_RECYCLE = int(os.getenv('DB_POOL_RECYCLE', 900))
+    DB_POOL_RECYCLE = _as_number('DB_POOL_RECYCLE', 900, int)
     DB_ECHO = _as_bool(os.getenv('DB_ECHO'), False)
 
     # Crypto Payment Settings
@@ -110,14 +129,14 @@ class Settings:
     PAYMENT_CURRENCY = os.getenv('PAYMENT_CURRENCY', 'USD')
 
     # Application Settings
-    PAYMENT_EXPIRY_HOURS = float(os.getenv('PAYMENT_EXPIRY_HOURS', 0.5))  # 30 minutes
-    PAYMENT_CHECK_INTERVAL = int(os.getenv('PAYMENT_CHECK_INTERVAL', 30))  # Seconds between checks
-    MIN_TOPUP_AMOUNT = float(os.getenv('MIN_TOPUP_AMOUNT', 1.0))
-    MAX_TOPUP_AMOUNT = float(os.getenv('MAX_TOPUP_AMOUNT', 100000.0))
+    PAYMENT_EXPIRY_HOURS = _as_number('PAYMENT_EXPIRY_HOURS', 0.5, float)  # 30 minutes
+    PAYMENT_CHECK_INTERVAL = _as_number('PAYMENT_CHECK_INTERVAL', 30, int)  # Seconds between checks
+    MIN_TOPUP_AMOUNT = _as_number('MIN_TOPUP_AMOUNT', 1.0, float)
+    MAX_TOPUP_AMOUNT = _as_number('MAX_TOPUP_AMOUNT', 100000.0, float)
 
     # HTTP server (CryptoBot webhook + Railway healthcheck).
     # Railway injects PORT; binding it is what gives the service a public URL.
-    PORT = int(os.getenv('PORT', 8080))
+    PORT = _as_number('PORT', 8080, int)
     WEBHOOK_ENABLED = _as_bool(os.getenv('WEBHOOK_ENABLED'), True)
 
     # Error monitoring (optional). See config/monitoring.py - leaving this
@@ -156,6 +175,20 @@ def validate_settings():
         logger.warning("Using SQLite. On Railway the filesystem is ephemeral, so the "
                         "database is wiped on every redeploy - set DATABASE_URL to your "
                         "Supabase connection string.")
+
+    # Uploaded product images and the store logo are written to ASSETS_DIR.
+    # On Railway (and any container platform) that path is wiped on every
+    # redeploy unless it is a mounted volume, so the store silently loses
+    # every image an admin uploaded. A relative path is always container
+    # local; an absolute one is at least plausibly a mount point.
+    if not os.path.isabs(settings.ASSETS_DIR):
+        logger.warning(
+            "ASSETS_DIR=%r is a relative path inside the container - uploaded "
+            "product images and the store logo will be LOST on every redeploy. "
+            "Mount a volume and set ASSETS_DIR to its path (e.g. /data/assets); "
+            "see DEPLOY.md.",
+            settings.ASSETS_DIR,
+        )
 
     # Non-fatal, but the corresponding payment method will not work.
     if not settings.CRYPTO_BOT_API_KEY:

@@ -171,5 +171,8 @@ alembic stamp 96e65c626176   # the baseline revision; see alembic/versions/
 alembic upgrade head          # applies only what comes after the baseline
 ```
 
-`migrations/categorynullable.py` is the pre-Alembic ad-hoc script this
-project used before — kept for history, superseded by `alembic/versions/`.
+Everything schema-related now lives in `alembic/versions/`. An earlier
+ad-hoc script (`migrations/categorynullable.py`) was removed: what it did
+is already part of the Alembic baseline, and re-running it would have
+rebuilt the `products` table with a `FLOAT` price column, undoing the
+`Numeric(12,2)` money migration.
