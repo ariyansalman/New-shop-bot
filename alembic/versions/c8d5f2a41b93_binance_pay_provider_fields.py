@@ -57,18 +57,30 @@ def upgrade() -> None:
         for type_name, value in _NEW_ENUM_VALUES:
             op.execute(f"ALTER TYPE {type_name} ADD VALUE IF NOT EXISTS '{value}'")
 
+    # A database whose transactions table was built by create_all() from a
+    # model file that already had these columns will reach this migration
+    # with some of them present. Adding one twice aborts the whole upgrade,
+    # so skip what is already there instead.
+    existing = {c["name"] for c in sa.inspect(bind).get_columns("transactions")}
+
     with op.batch_alter_table('transactions', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('provider', sa.String(length=32), nullable=True))
-        batch_op.add_column(sa.Column('provider_transaction_id', sa.String(length=128), nullable=True))
-        # NOT NULL with a server_default so existing rows backfill to 0
-        # instead of failing the migration on a non-empty table.
-        batch_op.add_column(sa.Column('verification_attempts', sa.Integer(),
-                                      nullable=False, server_default='0'))
-        batch_op.add_column(sa.Column('last_verification_at', sa.DateTime(), nullable=True))
-        batch_op.add_column(sa.Column('last_verification_error', sa.String(length=500), nullable=True))
-        batch_op.create_index('ix_transactions_provider', ['provider'], unique=False)
-        batch_op.create_unique_constraint('uq_transactions_provider_txn',
-                                          ['provider', 'provider_transaction_id'])
+        if 'provider' not in existing:
+            batch_op.add_column(sa.Column('provider', sa.String(length=32), nullable=True))
+        if 'provider_transaction_id' not in existing:
+            batch_op.add_column(sa.Column('provider_transaction_id', sa.String(length=128), nullable=True))
+        if 'verification_attempts' not in existing:
+            # NOT NULL with a server_default so existing rows backfill to 0
+            # instead of failing the migration on a non-empty table.
+            batch_op.add_column(sa.Column('verification_attempts', sa.Integer(),
+                                          nullable=False, server_default='0'))
+        if 'last_verification_at' not in existing:
+            batch_op.add_column(sa.Column('last_verification_at', sa.DateTime(), nullable=True))
+        if 'last_verification_error' not in existing:
+            batch_op.add_column(sa.Column('last_verification_error', sa.String(length=500), nullable=True))
+        if 'provider' not in existing:
+            batch_op.create_index('ix_transactions_provider', ['provider'], unique=False)
+            batch_op.create_unique_constraint('uq_transactions_provider_txn',
+                                              ['provider', 'provider_transaction_id'])
 
 
 def downgrade() -> None:

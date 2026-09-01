@@ -28,6 +28,12 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # Skip it when create_all() already built the settings table from a
+    # model file that had this column - adding it twice aborts the upgrade.
+    existing = {c["name"] for c in sa.inspect(op.get_bind()).get_columns("settings")}
+    if 'binance_pay_enabled' in existing:
+        return
+
     with op.batch_alter_table('settings') as batch_op:
         batch_op.add_column(sa.Column(
             'binance_pay_enabled',

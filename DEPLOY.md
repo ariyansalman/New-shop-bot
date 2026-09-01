@@ -203,6 +203,7 @@ To run the bot without the HTTP server: `WEBHOOK_ENABLED=false python app.py`
 | Images disappear after deploy | No volume attached. See section 3. |
 | `remaining connection slots are reserved` | Lower `DB_POOL_SIZE` / `DB_MAX_OVERFLOW`, or close idle sessions in Supabase. |
 | Tables missing | The user in `DATABASE_URL` lacks CREATE rights, or the boot log shows an earlier connection error. |
+| `column ... does not exist` in a crash loop | The schema is behind the code. Boot now migrates automatically — if you still see this, the upgrade itself failed; the error above it in the log says why. See [Schema changes](#schema-changes). |
 
 ---
 
@@ -214,9 +215,17 @@ only fills in tables that don't exist yet — it's a dev-only convenience for
 a brand new empty database, and it silently does nothing to an existing
 table when a column changes.
 
-**Railway** runs migrations for you: `railway.json`'s `releaseCommand` runs
-`alembic upgrade head` before every deploy's `startCommand`, against the
-same `DATABASE_URL` the app uses.
+**The app migrates itself at boot.** `init_db()` brings the schema to the
+latest revision before anything queries it, on every host. This is not
+belt-and-braces: a deployment whose platform release step silently does not
+run boots against a schema missing columns the code selects, and dies on the
+first query with a raw driver error rather than anything you can act on.
+`railway.json` still declares `releaseCommand: alembic upgrade head`, which
+simply becomes a no-op when it does run.
+
+> This assumes a **single replica** — two instances migrating the same
+> database at once is not something Alembic guards against. See
+> [Keep replicas at 1](#keep-replicas-at-1).
 
 **Local development:**
 
@@ -226,15 +235,24 @@ alembic revision --autogenerate -m "describe the change"   # after editing datab
 alembic downgrade -1          # undo the last migration
 ```
 
-**Adopting Alembic on a database that already has tables** (created by the
-old `create_all()`-only setup, before this project used Alembic): don't run
-`alembic upgrade head` blind, or it will try to `CREATE TABLE` things that
-already exist. Instead, tell Alembic the baseline is already applied:
+**A database that already has tables but no `alembic_version` row** — created
+by the old `create_all()`-only setup — is handled automatically. Booting it
+blind would fail either way: `alembic upgrade head` tries to `CREATE TABLE`
+things that already exist, while `alembic stamp head` skips migrations the
+database genuinely still needs. So `init_db()` reads the live schema instead
+of guessing, works out the newest revision actually applied, stamps that, and
+upgrades from there. It stops at the first migration whose changes are
+missing, which can only ever re-apply one, never skip one. You will see this
+in the logs once:
 
-```bash
-alembic stamp 96e65c626176   # the baseline revision; see alembic/versions/
-alembic upgrade head          # applies only what comes after the baseline
 ```
+Database has tables but no Alembic version row. Detected it at revision
+aca145102282 from the schema itself; stamping and upgrading from there.
+```
+
+To do it by hand instead, stamp the revision your schema is really at (see
+`_MIGRATION_PROBES` in `database/db.py` for what identifies each) and then
+`alembic upgrade head`.
 
 Everything schema-related now lives in `alembic/versions/`. An earlier
 ad-hoc script (`migrations/categorynullable.py`) was removed: what it did
