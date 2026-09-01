@@ -29,7 +29,7 @@ logging.getLogger("waitress").setLevel(logging.WARNING)
 
 logger = logging.getLogger("app")
 
-from config import settings, validate_settings          # noqa: E402
+from config import settings, validate_settings, init_sentry  # noqa: E402
 from database.init_data import initialize_database      # noqa: E402
 from telegram import Update                              # noqa: E402
 import bot as bot_module                                # noqa: E402
@@ -65,6 +65,8 @@ def main():
     except ValueError as e:
         logger.error("Configuration error: %s", e)
         sys.exit(1)
+
+    init_sentry()
 
     # 2. Database (Supabase in production). Fail loudly: a bot running against
     #    an unreachable database would break on the very first message.

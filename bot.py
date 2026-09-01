@@ -8,7 +8,7 @@ from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters,
     ConversationHandler, PreCheckoutQueryHandler
 )
-from config import settings, validate_settings
+from config import settings, validate_settings, init_sentry
 from database.init_data import initialize_database
 from handlers import user_handlers, admin_handlers, payment_handlers, admin_conversations, dispute_handlers
 
@@ -536,6 +536,8 @@ def main():
     except ValueError as e:
         logger.error(f"Configuration error: {e}")
         return
+
+    init_sentry()
 
     try:
         initialize_database()

@@ -120,6 +120,10 @@ class Settings:
     PORT = int(os.getenv('PORT', 8080))
     WEBHOOK_ENABLED = _as_bool(os.getenv('WEBHOOK_ENABLED'), True)
 
+    # Error monitoring (optional). See config/monitoring.py - leaving this
+    # unset disables Sentry entirely, no other behavior changes.
+    SENTRY_DSN = os.getenv('SENTRY_DSN', '')
+
     # Asset Storage
     # IMPORTANT: Railway containers have an ephemeral filesystem - anything
     # written here is lost on redeploy. Mount a Railway Volume and set

@@ -22,3 +22,9 @@ Flask==3.0.3
 # Production WSGI server. Flask's built-in server is single-threaded and
 # explicitly not for production; waitress is pure-Python so it runs anywhere.
 waitress==3.0.0
+
+# --- Error monitoring (optional) ------------------------------------------
+# Only does anything when SENTRY_DSN is set (see config/monitoring.py) -
+# every ERROR-level log call the app already makes (logger.exception(),
+# logger.error()) is what gets reported, no per-call changes needed.
+sentry-sdk[flask]==2.17.0
