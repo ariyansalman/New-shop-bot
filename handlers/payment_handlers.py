@@ -12,7 +12,7 @@ from utils import (
     format_price, validate_amount, to_money,
     create_cancel_keyboard, create_payment_method_keyboard,
     create_quantity_keyboard, create_main_menu_keyboard,
-    calculate_expiry_time, notify_admin, check_user_banned,
+    calculate_expiry_time, notify_admin, check_user_banned_async,
     t, DEFAULT_LANG,
 )
 from config.settings import settings as app_settings
@@ -44,7 +44,7 @@ async def topup_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    if check_user_banned(update.effective_user.id):
+    if await check_user_banned_async(update.effective_user.id):
         await query.edit_message_text("⛔ You have been banned from using this bot.")
         return ConversationHandler.END
 
@@ -590,7 +590,7 @@ async def buy_product_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     telegram_id = update.effective_user.id
 
     # Check if user is banned
-    if check_user_banned(telegram_id):
+    if await check_user_banned_async(telegram_id):
         lang = _get_user_lang(telegram_id)
         await query.edit_message_text(t('purchase.banned', lang))
         return ConversationHandler.END
@@ -769,7 +769,7 @@ async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    if check_user_banned(update.effective_user.id):
+    if await check_user_banned_async(update.effective_user.id):
         await query.edit_message_text(t('purchase.banned', _get_user_lang(update.effective_user.id)))
         return
 

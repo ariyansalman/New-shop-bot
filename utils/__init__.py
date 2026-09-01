@@ -8,7 +8,7 @@ from .helpers import (
     format_datetime, calculate_expiry_time, paginate_items,
     validate_amount, format_product_display,
     notify_admin, build_availability_text, parse_keys_from_text,
-    check_user_banned, clear_ban_cache
+    check_user_banned, check_user_banned_async, clear_ban_cache
 )
 from .keyboards import (
     create_main_menu_keyboard, create_back_support_keyboard,
@@ -28,7 +28,7 @@ __all__ = [
     'format_datetime', 'calculate_expiry_time', 'paginate_items',
     'validate_amount', 'format_product_display',
     'notify_admin', 'build_availability_text', 'parse_keys_from_text',
-    'check_user_banned', 'clear_ban_cache',
+    'check_user_banned', 'check_user_banned_async', 'clear_ban_cache',
     'create_main_menu_keyboard', 'create_back_support_keyboard',
     'create_pagination_keyboard', 'create_product_detail_keyboard',
     'create_quantity_keyboard',

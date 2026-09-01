@@ -6,7 +6,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 from database import get_db_session, User, Order, Dispute, DisputeStatus
 from utils import (
     format_price, format_datetime, notify_admin, create_cancel_keyboard,
-    is_admin, check_user_banned, log_admin_action
+    is_admin, check_user_banned_async, log_admin_action
 )
 from datetime import datetime
 
@@ -23,7 +23,7 @@ async def open_dispute_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     user_id = update.effective_user.id
 
-    if check_user_banned(user_id):
+    if await check_user_banned_async(user_id):
         await query.edit_message_text("⛔ You have been banned from using this bot.")
         return ConversationHandler.END
 

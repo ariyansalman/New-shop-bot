@@ -1,5 +1,6 @@
 """Helper utility functions for the Telegram bot."""
 
+import asyncio
 import logging
 import threading
 from datetime import datetime, timedelta
@@ -192,6 +193,26 @@ def check_user_banned(telegram_id: int) -> bool:
         _ban_cache[telegram_id] = (result, datetime.utcnow())
 
     return result
+
+
+async def check_user_banned_async(telegram_id: int) -> bool:
+    """Async wrapper around check_user_banned.
+
+    On a cache hit (the common case - see _BAN_CACHE_TTL) this returns
+    immediately without touching a thread. On a cache miss it runs the
+    blocking DB query in a worker thread instead of on the event loop, so
+    one user's ban check can't stall every other user's handler while it
+    waits on the database. Handlers should await this instead of calling
+    check_user_banned directly.
+    """
+    with _ban_cache_lock:
+        cached = _ban_cache.get(telegram_id)
+    if cached:
+        cached_value, cached_time = cached
+        if (datetime.utcnow() - cached_time).total_seconds() < _BAN_CACHE_TTL:
+            return cached_value
+
+    return await asyncio.to_thread(check_user_banned, telegram_id)
 
 
 def clear_ban_cache(telegram_id: int = None):
