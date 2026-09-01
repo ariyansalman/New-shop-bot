@@ -38,6 +38,8 @@ def binance_enabled(monkeypatch):
     monkeypatch.setattr(settings, "BINANCE_VERIFY_RETRY_INTERVAL", 180, raising=False)
     monkeypatch.setattr(settings, "ADMIN_IDS", {ADMIN_ID}, raising=False)
     monkeypatch.setattr(settings, "ADMIN_TELEGRAM_ID", ADMIN_ID, raising=False)
+    monkeypatch.setattr(settings, "CRYPTO_BOT_API_KEY", "test-crypto-key", raising=False)
+    monkeypatch.setattr(settings, "TELEGRAM_PROVIDER_TOKEN", "test:provider", raising=False)
     # The kill switch is a module-level cache; keep tests independent of
     # whatever a previous test left in it.
     monkeypatch.setattr(bp, "_admin_toggle", True, raising=False)

@@ -93,22 +93,32 @@ def create_cancel_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 
-def create_payment_method_keyboard():
-    """Create payment method selection keyboard.
+def payment_methods_available() -> list:
+    """The top-up methods this deployment can actually complete.
 
-    Binance Pay is appended only when it is switched on and actually
-    configured, so a user never reaches a checkout whose payment could not
-    be verified. The existing two methods are untouched.
+    A method is offered only when its credentials are set. Showing a button
+    that cannot work is worse than showing nothing: CryptoBot in particular
+    used to accept the tap, write a PENDING transaction row, fail against
+    the API, and tell the user to "try again" - advice that could never
+    succeed, once per attempt, with a dead row left behind each time.
     """
-    keyboard = [
-        [InlineKeyboardButton("🪙 CryptoBot", callback_data="pay_crypto")],
-        [InlineKeyboardButton("💳 Card", callback_data="pay_card")],
-    ]
-
+    from config.settings import settings as app_settings
     from handlers.binance_pay_handlers import binance_pay_available
-    if binance_pay_available():
-        keyboard.append([InlineKeyboardButton("🟡 Binance Pay", callback_data="pay_binance")])
 
+    methods = []
+    if app_settings.CRYPTO_BOT_API_KEY:
+        methods.append(("🪙 CryptoBot", "pay_crypto"))
+    if app_settings.TELEGRAM_PROVIDER_TOKEN:
+        methods.append(("💳 Card", "pay_card"))
+    if binance_pay_available():
+        methods.append(("🟡 Binance Pay", "pay_binance"))
+    return methods
+
+
+def create_payment_method_keyboard():
+    """Create payment method selection keyboard."""
+    keyboard = [[InlineKeyboardButton(label, callback_data=data)]
+                for label, data in payment_methods_available()]
     keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel")])
     return InlineKeyboardMarkup(keyboard)
 

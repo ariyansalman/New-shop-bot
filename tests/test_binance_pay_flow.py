@@ -29,6 +29,11 @@ def binance_enabled(monkeypatch):
     monkeypatch.setattr(settings, "BINANCE_PAY_ID", "123456789", raising=False)
     monkeypatch.setattr(settings, "BINANCE_PAY_CURRENCY", "USDT", raising=False)
     monkeypatch.setattr(settings, "BINANCE_MAX_VERIFY_ATTEMPTS", 3, raising=False)
+    # The other two methods are only offered when configured, so set them
+    # here: these tests are about Binance appearing and disappearing, not
+    # about CryptoBot and Card.
+    monkeypatch.setattr(settings, "CRYPTO_BOT_API_KEY", "test-crypto-key", raising=False)
+    monkeypatch.setattr(settings, "TELEGRAM_PROVIDER_TOKEN", "test:provider", raising=False)
 
 
 def make_user(balance="0.00") -> int:

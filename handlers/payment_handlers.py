@@ -28,6 +28,7 @@ from database import (
 from utils import (
     format_price, validate_amount, to_money,
     create_cancel_keyboard, create_payment_method_keyboard,
+    payment_methods_available,
     create_quantity_keyboard, create_main_menu_keyboard,
     calculate_expiry_time, notify_admin, check_user_banned_async,
     t, DEFAULT_LANG,
@@ -68,6 +69,16 @@ async def topup_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if await check_user_banned_async(update.effective_user.id):
         await query.edit_message_text("⛔ You have been banned from using this bot.")
+        return ConversationHandler.END
+
+    # Stop here rather than asking for an amount and then presenting a menu
+    # with nothing but Cancel on it.
+    if not payment_methods_available():
+        await query.edit_message_text(
+            "⚠️ Top-ups are unavailable right now.\n\n"
+            "No payment method is configured. Please contact support.",
+            reply_markup=create_main_menu_keyboard()
+        )
         return ConversationHandler.END
 
     message = "💬 Please reply the amount USD you want to fund your wallet.\nExample: 100"
@@ -115,6 +126,17 @@ async def payment_method_crypto(update: Update, context: ContextTypes.DEFAULT_TY
 
     usd_amount = context.user_data.get('topup_amount', 0)
     user_id = update.effective_user.id
+
+    # Card has always had this guard; crypto did not, so an unconfigured
+    # deployment wrote a PENDING row, failed the API call, and told the user
+    # to try again. Refuse before anything is written.
+    if not app_settings.CRYPTO_BOT_API_KEY:
+        await query.edit_message_text(
+            "❌ Crypto payments are not configured yet.\n\n"
+            "Please choose another payment method or contact support.",
+            reply_markup=create_cancel_keyboard()
+        )
+        return ConversationHandler.END
 
     def _sync():
         with get_db_session() as session:
