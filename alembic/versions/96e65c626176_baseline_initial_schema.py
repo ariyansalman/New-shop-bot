@@ -217,3 +217,15 @@ def downgrade() -> None:
     op.drop_table('categories')
     op.drop_table('broadcasts')
     # ### end Alembic commands ###
+
+    # On Postgres, dropping a table with an Enum column does not drop the
+    # CREATE TYPE it implicitly created - the type is left behind, so
+    # re-running upgrade() afterward fails with
+    # "DuplicateObject: type ... already exists". Confirmed by actually
+    # running downgrade() -> upgrade() against a real Postgres instance in
+    # CI (this is invisible on SQLite, which has no native enum type at
+    # all - the whole reason the CI Postgres job exists). No-op on other
+    # dialects since ENUM.drop() checks the bind's own dialect.
+    for enum_name in ('producttype', 'orderstatus', 'disputestatus',
+                       'transactionstatus', 'paymentmethod'):
+        sa.Enum(name=enum_name).drop(op.get_bind(), checkfirst=True)
