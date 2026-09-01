@@ -50,7 +50,17 @@ jobs:
       # alembic/env.py only needs DATABASE_URL - BOT_TOKEN/ADMIN_TELEGRAM_ID
       # are read by config/settings.py at import time but only checked for
       # truthiness by validate_settings(), which this job never calls.
-      DATABASE_URL: postgresql://shopbot:shopbot@localhost:5432/shopbot
+      #
+      # sslmode=disable: config/settings.py's _normalize_database_url()
+      # defaults every postgresql:// URL to sslmode=require (Supabase
+      # rejects unencrypted connections) via query.setdefault(), which only
+      # fills in a value that's absent - passing sslmode=disable here
+      # overrides that default rather than being clobbered by it. This
+      # plain postgres:16 service container doesn't speak TLS at all, so
+      # without this override every connection attempt fails with
+      # "server does not support SSL, but SSL was required" (confirmed by
+      # actually running this job before adding the override).
+      DATABASE_URL: postgresql://shopbot:shopbot@localhost:5432/shopbot?sslmode=disable
     steps:
       - uses: actions/checkout@v4
 
