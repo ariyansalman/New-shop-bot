@@ -94,12 +94,22 @@ def create_cancel_keyboard():
 
 
 def create_payment_method_keyboard():
-    """Create payment method selection keyboard."""
+    """Create payment method selection keyboard.
+
+    Binance Pay is appended only when it is switched on and actually
+    configured, so a user never reaches a checkout whose payment could not
+    be verified. The existing two methods are untouched.
+    """
     keyboard = [
         [InlineKeyboardButton("🪙 CryptoBot", callback_data="pay_crypto")],
         [InlineKeyboardButton("💳 Card", callback_data="pay_card")],
-        [InlineKeyboardButton("❌ Cancel", callback_data="cancel")]
     ]
+
+    from handlers.binance_pay_handlers import binance_pay_available
+    if binance_pay_available():
+        keyboard.append([InlineKeyboardButton("🟡 Binance Pay", callback_data="pay_binance")])
+
+    keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel")])
     return InlineKeyboardMarkup(keyboard)
 
 

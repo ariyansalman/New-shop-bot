@@ -38,17 +38,28 @@ class DisputeStatus(enum.Enum):
 
 
 class TransactionStatus(enum.Enum):
-    """Enum for transaction/payment status."""
+    """Enum for transaction/payment status.
+
+    VERIFYING and MANUAL_REVIEW exist for provider-verified payments
+    (currently Binance Pay): VERIFYING is held while a verification call is
+    in flight, which is also what stops a second submission from starting a
+    parallel verification of the same transaction. MANUAL_REVIEW is the
+    terminal state for a payment that could not be settled automatically
+    after the retry budget - it never credits on its own, an admin decides.
+    """
     PENDING = "pending"
+    VERIFYING = "verifying"
     COMPLETED = "completed"
     EXPIRED = "expired"
     FAILED = "failed"
+    MANUAL_REVIEW = "manual_review"
 
 
 class PaymentMethod(enum.Enum):
     """Enum for payment methods."""
     CRYPTO_WALLET = "crypto_wallet"
     CARD = "card"
+    BINANCE_PAY = "binance_pay"
 
 
 class User(Base):
@@ -221,6 +232,31 @@ class Transaction(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     expires_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
+
+    # --- Provider-verified payments (Binance Pay) -----------------------
+    # These stay NULL for CRYPTO_WALLET and CARD, which settle through
+    # their own existing paths and are untouched by this.
+    #
+    # provider_transaction_id is the id the *payer* submits (Binance's
+    # transactionId). It is deliberately NOT the same thing as this row's
+    # own `id`, which remains the local order number shown to the user.
+    # The UNIQUE constraint is the real double-credit guard: even if two
+    # requests race past the status check, only one can attach a given
+    # provider transaction to a local one, so the same Binance payment can
+    # never be credited twice - not by a double click, not by the user and
+    # the background worker at once, not across two local transactions.
+    provider = Column(String(32), nullable=True, index=True)
+    provider_transaction_id = Column(String(128), nullable=True)
+    verification_attempts = Column(Integer, default=0, nullable=False)
+    last_verification_at = Column(DateTime, nullable=True)
+    # Operator-facing failure reason. Never store credentials or raw
+    # provider payloads here - it is shown in the admin panel.
+    last_verification_error = Column(String(500), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint('provider', 'provider_transaction_id',
+                         name='uq_transactions_provider_txn'),
+    )
 
     # Relationships
     user = relationship("User", back_populates="transactions")

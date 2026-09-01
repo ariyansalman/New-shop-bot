@@ -128,6 +128,38 @@ class Settings:
     # top-up value, so this must be a USD-denominated provider for amounts to match.
     PAYMENT_CURRENCY = os.getenv('PAYMENT_CURRENCY', 'USD')
 
+    # Binance Pay Settings
+    #
+    # These are an ordinary Binance account API key/secret (the same kind
+    # every signed SAPI endpoint takes), NOT Binance Pay *Merchant*
+    # credentials - see services/binance_pay.py for why that distinction
+    # matters. Give the key read permission only: verification never needs
+    # to move funds, and a key that cannot withdraw cannot drain the
+    # account if this server is ever compromised. Whitelist the server IP
+    # in Binance's API management too.
+    #
+    # They live in the environment, not in the database and not in the
+    # Telegram admin panel: a secret typed into Telegram ends up in
+    # Telegram's servers, the chat history and the admin's phone backup.
+    # The admin panel shows only a masked status and a test button.
+    BINANCE_API_KEY = os.getenv('BINANCE_API_KEY', '')
+    BINANCE_API_SECRET = os.getenv('BINANCE_API_SECRET', '')
+    # The Binance Pay ID users send to. Not a secret - it is printed in the
+    # checkout message on purpose.
+    BINANCE_PAY_ID = os.getenv('BINANCE_PAY_ID', '')
+    BINANCE_PAY_CURRENCY = os.getenv('BINANCE_PAY_CURRENCY', 'USDT').upper()
+    BINANCE_PAY_ENABLED = _as_bool(os.getenv('BINANCE_PAY_ENABLED'), False)
+    # Uses services/binance_pay_mock.py instead of the real API. A mock
+    # success can only happen while this is on.
+    BINANCE_TEST_MODE = _as_bool(os.getenv('BINANCE_TEST_MODE'), False)
+    # Retry budget for a payment stuck on temporary errors. After the last
+    # attempt the transaction goes to MANUAL_REVIEW - never to COMPLETED.
+    BINANCE_MAX_VERIFY_ATTEMPTS = _as_number('BINANCE_MAX_VERIFY_ATTEMPTS', 5, int)
+    # Seconds between background retries. The Pay history endpoint is
+    # Weight(UID) 3000, so this is deliberately far slower than the
+    # 30-second CryptoBot poll.
+    BINANCE_VERIFY_RETRY_INTERVAL = _as_number('BINANCE_VERIFY_RETRY_INTERVAL', 180, int)
+
     # Application Settings
     PAYMENT_EXPIRY_HOURS = _as_number('PAYMENT_EXPIRY_HOURS', 0.5, float)  # 30 minutes
     PAYMENT_CHECK_INTERVAL = _as_number('PAYMENT_CHECK_INTERVAL', 30, int)  # Seconds between checks
@@ -195,6 +227,29 @@ def validate_settings():
         logger.warning("CRYPTO_BOT_API_KEY is not set - crypto top-ups are disabled")
     if not settings.TELEGRAM_PROVIDER_TOKEN:
         logger.warning("TELEGRAM_PROVIDER_TOKEN is not set - card top-ups are disabled")
+
+    # Binance Pay: warn about a half-configured setup rather than letting a
+    # user reach a checkout that can never verify. Never log the values.
+    if settings.BINANCE_PAY_ENABLED:
+        missing = []
+        if not settings.BINANCE_PAY_ID:
+            missing.append("BINANCE_PAY_ID")
+        if not settings.BINANCE_TEST_MODE:
+            if not settings.BINANCE_API_KEY:
+                missing.append("BINANCE_API_KEY")
+            if not settings.BINANCE_API_SECRET:
+                missing.append("BINANCE_API_SECRET")
+        if missing:
+            logger.warning(
+                "BINANCE_PAY_ENABLED is on but %s not set - Binance top-ups "
+                "will be hidden until configured", ", ".join(missing)
+            )
+        elif settings.BINANCE_TEST_MODE:
+            logger.warning(
+                "BINANCE_TEST_MODE is ON - Binance payments are verified against "
+                "a mock provider, not the real Binance API. Never leave this on "
+                "in production."
+            )
     if not settings.BOT_USERNAME:
         logger.warning("BOT_USERNAME is not set - CryptoBot 'return to bot' button disabled")
 

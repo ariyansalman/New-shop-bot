@@ -10,7 +10,8 @@ from telegram.ext import (
 )
 from config import settings, validate_settings, init_sentry
 from database.init_data import initialize_database
-from handlers import user_handlers, admin_handlers, payment_handlers, admin_conversations, dispute_handlers
+from handlers import (user_handlers, admin_handlers, payment_handlers,
+                      admin_conversations, dispute_handlers, binance_pay_handlers)
 
 # M""M M"""""""`YM M""""""'YMM M"""""`'"""`YM M""""""'YMM MM""""""""`M M""MMMMM""M 
 # M  M M  mmmm.  M M  mmmm. `M M  mm.  mm.  M M  mmmm. `M MM  mmmmmmmM M  MMMMM  M 
@@ -79,12 +80,25 @@ def build_application(post_init=None):
 
     # Top-up conversation
     topup_conv_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(payment_handlers.topup_start, pattern="^topup$")],
+        entry_points=[
+            CallbackQueryHandler(payment_handlers.topup_start, pattern="^topup$"),
+            # Re-enters the conversation at the order-id input state.
+            CallbackQueryHandler(binance_pay_handlers.binance_submit_start,
+                                 pattern="^binance_submit_"),
+        ],
         states={
             payment_handlers.AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, payment_handlers.topup_amount)],
             payment_handlers.METHOD: [
                 CallbackQueryHandler(payment_handlers.payment_method_crypto, pattern="^pay_crypto$"),
                 CallbackQueryHandler(payment_handlers.payment_method_card, pattern="^pay_card$"),
+                CallbackQueryHandler(binance_pay_handlers.payment_method_binance, pattern="^pay_binance$"),
+            ],
+            # "Submit Order ID" opens a plain text-input state: the user
+            # sends the Binance id and that submission itself starts
+            # verification. Deliberately no Verify/Cancel buttons here.
+            binance_pay_handlers.BINANCE_ORDER_ID: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND,
+                               binance_pay_handlers.binance_order_id_received),
             ],
         },
         fallbacks=[
@@ -498,6 +512,11 @@ def build_application(post_init=None):
         ],
     )
     application.add_handler(restock_conv)
+
+    # Binance "Cancel Order" lives outside the top-up conversation: the
+    # conversation has already ended by the time the checkout is on screen.
+    application.add_handler(CallbackQueryHandler(
+        binance_pay_handlers.binance_cancel_order, pattern="^binance_cancel_"))
 
     # Schedule background jobs
     job_queue = application.job_queue
