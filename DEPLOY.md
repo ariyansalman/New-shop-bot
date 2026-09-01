@@ -109,7 +109,72 @@ without a valid signature are rejected with 401.
 
 ---
 
-## 5. Local development
+## 5. Binance Pay (optional third top-up method)
+
+The user sends USDT to your Binance Pay ID from the Binance app, then pastes
+the Binance Transaction ID into the bot. Submitting that ID is what starts
+verification — there is no separate "verify" button.
+
+### Create the API key
+
+1. Binance → **Account → API Management → Create API**.
+2. Give it **read permission only**. Verification never moves funds, and a
+   key that cannot withdraw or trade cannot drain the account if this server
+   is ever compromised. Leave withdrawals, trading, futures and margin off.
+3. **Whitelist your server's IP.** On Railway that means a static outbound
+   IP; without one, an unrestricted key is the only thing that works, which
+   is a materially worse security position.
+4. Set `BINANCE_API_KEY`, `BINANCE_API_SECRET`, `BINANCE_PAY_ID` and
+   `BINANCE_PAY_ENABLED=true` in Railway's variables. Never put them in a
+   file that gets committed.
+
+The method stays hidden from users until it is enabled *and* configured, so
+nobody can reach a checkout whose payment could never be verified.
+
+### Try it without touching real money
+
+`BINANCE_TEST_MODE=true` swaps in a mock provider that replaces only the
+network call — the real verification rules still run. Submit `MOCK-SUCCESS-
+25.00` against a 25.00 order to see a success, `MOCK-WRONG-AMOUNT` to see a
+rejection; `services/binance_pay_mock.py` lists the rest. A mock payment can
+only ever succeed while this flag is on. **Never leave it on in production**
+— the bot logs a warning at every boot while it is.
+
+### What this can and cannot do
+
+Verification reads your account's Binance Pay history
+(`GET /sapi/v1/pay/transactions`). That endpoint has real limits, and the
+implementation works within them rather than around them:
+
+- **No lookup by ID.** It returns recent history, which the bot searches for
+  the submitted ID. History is capped, so a very old payment cannot be found.
+- **No status field.** An incoming record with a positive amount in the
+  expected asset is the documented success signal.
+- **The destination is implicit** — the key's own account. Verification
+  confirms money arrived in *your* account; it cannot separately assert
+  which Pay ID was addressed.
+- **It is expensive.** Weight(UID) 3000 per call, hence
+  `BINANCE_VERIFY_RETRY_INTERVAL=180` rather than the 30-second CryptoBot
+  poll, and a cap of 10 transactions per retry pass.
+
+Because a mistyped ID and one that has not yet reached history look
+identical, an unmatched ID is treated as "try again later", never as a
+rejection. After `BINANCE_MAX_VERIFY_ATTEMPTS` the transaction moves to
+**manual review** — it is never credited automatically, and never silently
+expired. Review those under **Admin → 🟡 Binance Pay → Payment Monitoring**.
+
+### Admin panel
+
+**Admin → 🟡 Binance Pay** shows configuration status (credentials as
+set/not-set plus the last four characters of the key — they are never
+editable or displayed in Telegram), a connectivity test, and a kill switch
+that stops new Binance top-ups without a redeploy. The switch can only
+disable a working setup; it cannot enable the method on a server with no
+credentials.
+
+---
+
+## 6. Local development
 
 ```bash
 python -m venv .venv && source .venv/bin/activate

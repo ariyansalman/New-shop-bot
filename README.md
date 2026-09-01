@@ -59,9 +59,11 @@ Built with **Python**, **python-telegram-bot v20** (async), and **SQLAlchemy** (
 - 🛒 Product catalog with categories and subcategories
 - 🔑 Two product types: **license keys** (auto-delivered from inventory) and **downloadable files** (delivered as links)
 - 💰 Internal wallet — users top up, then spend the balance on purchases
-- 💳 Two top-up methods, both optional and independently toggled by config:
+- 💳 Three top-up methods, all optional and independently toggled by config:
   - **CryptoBot** — pay with any cryptocurrency via [@CryptoBot](https://t.me/CryptoBot)
   - **Card** — native in-Telegram card payments via Telegram Payments
+  - **Binance Pay** — the user pays your Binance Pay ID and submits the Binance
+    Transaction ID, which is verified automatically against your Pay history
 - 🛠 Full in-Telegram **admin panel**: products, categories, stock/restock, orders, disputes, users (ban/unban), broadcasts, and store settings
 - ⏱ Background jobs for payment verification and periodic availability broadcasts
 
@@ -127,6 +129,17 @@ You need a **bot token** and your **admin Telegram ID**. The two payment keys ar
 1. Open [@BotFather](https://t.me/BotFather) → select your bot → **Payments**.
 2. Connect a payment provider and copy the **provider token**. Leave blank to disable the Card option.
    > Card-provider availability is region-dependent — pick a provider supported in your country. Use the provider’s **TEST** token while developing.
+
+### 1e. Binance API key (optional — enables Binance Pay top-ups)
+1. Binance → **Account → API Management → Create API**.
+2. Grant **read permission only** and whitelist your server's IP. Verification
+   never moves funds, so the key needs no withdrawal, trading, futures or
+   margin permission — and one that lacks them cannot drain the account if the
+   server is compromised.
+3. Set `BINANCE_API_KEY`, `BINANCE_API_SECRET`, `BINANCE_PAY_ID` and
+   `BINANCE_PAY_ENABLED=true`. Leave blank to hide the Binance option.
+   > Set `BINANCE_TEST_MODE=true` to try the whole flow against a mock provider
+   > first. See [DEPLOY.md](DEPLOY.md) for what this can and cannot verify.
 
 ---
 
@@ -209,6 +222,14 @@ Fill in the variables:
 | `CRYPTO_BOT_API_KEY` | ➖ | CryptoBot Crypto Pay token (Step 1c). Blank disables crypto top-up. |
 | `TELEGRAM_PROVIDER_TOKEN` | ➖ | Telegram Payments provider token (Step 1d). Blank disables card top-up. |
 | `PAYMENT_CURRENCY` | ➖ | Currency for card invoices (default `USD`). Must be USD-denominated to match wallet amounts. |
+| `BINANCE_API_KEY` | ➖ | Binance account API key, **read permission only** (Step 1e). Blank disables Binance top-up. |
+| `BINANCE_API_SECRET` | ➖ | Its secret. Environment only — never shown in Telegram, never logged. |
+| `BINANCE_PAY_ID` | ➖ | The Pay ID users send to. Not a secret; it is printed in the checkout message. |
+| `BINANCE_PAY_CURRENCY` | ➖ | Asset expected on incoming payments (default `USDT`). |
+| `BINANCE_PAY_ENABLED` | ➖ | Off by default. The method stays hidden until this is on *and* configured. |
+| `BINANCE_TEST_MODE` | ➖ | Verifies against a mock provider. **Never enable in production.** |
+| `BINANCE_MAX_VERIFY_ATTEMPTS` | ➖ | Retries before a payment goes to manual review (default `5`). Never auto-credits after. |
+| `BINANCE_VERIFY_RETRY_INTERVAL` | ➖ | Seconds between retries (default `180` — the endpoint is Weight(UID) 3000). |
 
 > The bot **will not start** until at least `BOT_TOKEN` and `ADMIN_TELEGRAM_ID` are set — it validates these on startup and exits with a clear message if either is missing.
 
@@ -350,7 +371,7 @@ An open-source, self-hosted **Telegram bot for selling digital products** — so
 Anything digital: software license keys, game keys, gift-card codes, e-books, PDFs, courses, templates, or any downloadable file delivered via a link.
 
 **How do customers pay?**
-Customers fund an in-bot **wallet**, then spend the balance on purchases. Top-ups are supported via **CryptoBot** (any cryptocurrency) and **card payments** (Telegram Payments). Both methods are optional and toggled by config.
+Customers fund an in-bot **wallet**, then spend the balance on purchases. Top-ups are supported via **CryptoBot** (any cryptocurrency), **card payments** (Telegram Payments), and **Binance Pay**. All three are optional and toggled by config — see [DEPLOY.md](DEPLOY.md) for the Binance setup and its documented limitations.
 
 **Is delivery automatic?**
 Yes. License keys are assigned automatically from your inventory the moment a purchase is confirmed; file products are delivered as a download link — no manual fulfillment.
