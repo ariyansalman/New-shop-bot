@@ -143,7 +143,33 @@ To run the bot without the HTTP server: `WEBHOOK_ENABLED=false python app.py`
 
 ## Schema changes
 
-`create_all()` creates missing tables but never alters existing ones. To change
-a column on a live database, run the SQL yourself in the Supabase SQL editor (or
-adopt Alembic). See `migrations/categorynullable.py` for an example — it prints
-the PostgreSQL equivalent when run against Supabase.
+Schema changes go through [Alembic](https://alembic.sqlalchemy.org/), not
+`create_all()`. `create_all()` (run automatically at boot via `init_db()`)
+only fills in tables that don't exist yet — it's a dev-only convenience for
+a brand new empty database, and it silently does nothing to an existing
+table when a column changes.
+
+**Railway** runs migrations for you: `railway.json`'s `releaseCommand` runs
+`alembic upgrade head` before every deploy's `startCommand`, against the
+same `DATABASE_URL` the app uses.
+
+**Local development:**
+
+```bash
+alembic upgrade head          # apply any migrations not yet applied
+alembic revision --autogenerate -m "describe the change"   # after editing database/models.py
+alembic downgrade -1          # undo the last migration
+```
+
+**Adopting Alembic on a database that already has tables** (created by the
+old `create_all()`-only setup, before this project used Alembic): don't run
+`alembic upgrade head` blind, or it will try to `CREATE TABLE` things that
+already exist. Instead, tell Alembic the baseline is already applied:
+
+```bash
+alembic stamp 96e65c626176   # the baseline revision; see alembic/versions/
+alembic upgrade head          # applies only what comes after the baseline
+```
+
+`migrations/categorynullable.py` is the pre-Alembic ad-hoc script this
+project used before — kept for history, superseded by `alembic/versions/`.

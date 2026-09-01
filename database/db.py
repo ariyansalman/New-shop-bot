@@ -81,8 +81,10 @@ def init_db():
     """Create any missing tables.
 
     Safe to run on every boot: create_all() only creates what does not exist.
-    It does NOT alter existing tables, so a schema change still needs a real
-    migration (see migrations/).
+    It does NOT alter existing tables - that's what the Alembic migrations in
+    alembic/versions/ are for (run via `alembic upgrade head`, which Railway
+    does automatically as a release step; see DEPLOY.md). This function stays
+    mainly as a dev convenience for a brand-new empty database.
     """
     Base.metadata.create_all(engine)
     print("[OK] Database tables created successfully")
