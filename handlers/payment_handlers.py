@@ -1,5 +1,22 @@
-"""Payment and wallet management handlers."""
+"""Payment and wallet management handlers.
 
+Every handler below that used to do "with get_db_session() as session: ...
+query... await telegram_call(...)" now splits that in two: a nested _sync()
+closure does the DB work (row locks, key assignment, wallet debits - and
+any pure-Python formatting that needs the still-attached ORM objects) and
+runs off the event loop via asyncio.to_thread, then the async function does
+only the actual Telegram API await with the plain data _sync() returned.
+This matters because python-telegram-bot runs everything on one event
+loop - a synchronous DB query (or, in payment_method_crypto's case, the
+CryptoBot HTTP call too) blocks every other user's handler until it
+returns, which is most noticeable against a remote database (e.g.
+Supabase) where each query is a network round trip rather than a local
+file read. The two scheduled jobs (check_pending_payments,
+check_expired_payments) and the broadcast job already used this pattern;
+the per-update handlers below now match it.
+"""
+
+import asyncio
 import logging
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
@@ -37,6 +54,11 @@ def _get_user_lang(telegram_id: int) -> str:
     with get_db_session() as session:
         lang = session.query(User.language).filter_by(telegram_id=telegram_id).scalar()
     return lang or DEFAULT_LANG
+
+
+async def _get_user_lang_async(telegram_id: int) -> str:
+    """Async wrapper around _get_user_lang - see its docstring."""
+    return await asyncio.to_thread(_get_user_lang, telegram_id)
 
 
 async def topup_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -94,39 +116,38 @@ async def payment_method_crypto(update: Update, context: ContextTypes.DEFAULT_TY
     usd_amount = context.user_data.get('topup_amount', 0)
     user_id = update.effective_user.id
 
-    with get_db_session() as session:
-        user = session.query(User).filter_by(telegram_id=user_id).first()
+    def _sync():
+        with get_db_session() as session:
+            user = session.query(User).filter_by(telegram_id=user_id).first()
 
-        if not user:
-            await query.edit_message_text("❌ User not found.")
-            return ConversationHandler.END
+            if not user:
+                return "❌ User not found.", None
 
-        # Check if user already has a pending CryptoBot transaction
-        existing_pending = session.query(Transaction).filter_by(
-            user_id=user.id,
-            payment_method=PaymentMethod.CRYPTO_WALLET,
-            status=TransactionStatus.PENDING
-        ).first()
+            # Check if user already has a pending CryptoBot transaction
+            existing_pending = session.query(Transaction).filter_by(
+                user_id=user.id,
+                payment_method=PaymentMethod.CRYPTO_WALLET,
+                status=TransactionStatus.PENDING
+            ).first()
 
-        if existing_pending:
-            # Show full payment details for the existing pending order
-            # Extract pay_url from crypto_address (format: "invoice_id|pay_url")
-            pay_url = None
-            if existing_pending.crypto_address and "|" in existing_pending.crypto_address:
-                _, pay_url = existing_pending.crypto_address.split("|", 1)
-            elif existing_pending.crypto_address and existing_pending.crypto_address.startswith("http"):
-                pay_url = existing_pending.crypto_address
+            if existing_pending:
+                # Show full payment details for the existing pending order
+                # Extract pay_url from crypto_address (format: "invoice_id|pay_url")
+                pay_url = None
+                if existing_pending.crypto_address and "|" in existing_pending.crypto_address:
+                    _, pay_url = existing_pending.crypto_address.split("|", 1)
+                elif existing_pending.crypto_address and existing_pending.crypto_address.startswith("http"):
+                    pay_url = existing_pending.crypto_address
 
-            if not pay_url:
-                # An InlineKeyboardButton with an invalid url raises BadRequest.
-                await query.edit_message_text(
-                    "⚠️ You have a pending payment but its payment link is missing.\n"
-                    "Please wait for it to expire, or contact support.",
-                    reply_markup=create_main_menu_keyboard()
-                )
-                return ConversationHandler.END
+                if not pay_url:
+                    # An InlineKeyboardButton with an invalid url raises BadRequest.
+                    return (
+                        "⚠️ You have a pending payment but its payment link is missing.\n"
+                        "Please wait for it to expire, or contact support.",
+                        create_main_menu_keyboard(),
+                    )
 
-            message = f"""⚠️ You already have a pending CryptoBot payment!
+                message = f"""⚠️ You already have a pending CryptoBot payment!
 
 💬 CryptoBot Payment
 
@@ -151,57 +172,51 @@ The system will automatically verify and add ${existing_pending.amount:.2f} to y
 
 You cannot create a new order until this one is completed or expired."""
 
-            # Create keyboard with payment button
-            keyboard = [
-                [InlineKeyboardButton("💳 Pay with Any Crypto", url=pay_url)],
-                [InlineKeyboardButton("❌ Cancel", callback_data="cancel")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
+                keyboard = [
+                    [InlineKeyboardButton("💳 Pay with Any Crypto", url=pay_url)],
+                    [InlineKeyboardButton("❌ Cancel", callback_data="cancel")]
+                ]
+                # No parse_mode: the text contains '#', '$' and '_' which Telegram
+                # rejects as malformed Markdown entities.
+                return message, InlineKeyboardMarkup(keyboard)
 
-            # No parse_mode: the text contains '#', '$' and '_' which Telegram
-            # rejects as malformed Markdown entities.
-            await query.edit_message_text(message, reply_markup=reply_markup)
-            return ConversationHandler.END
-
-        # Create transaction record
-        transaction = Transaction(
-            user_id=user.id,
-            amount=usd_amount,
-            payment_method=PaymentMethod.CRYPTO_WALLET,
-            status=TransactionStatus.PENDING,
-            expires_at=calculate_expiry_time(app_settings.PAYMENT_EXPIRY_HOURS)
-        )
-        session.add(transaction)
-        session.commit()
-        session.refresh(transaction)
-
-        # Generate payment invoice in USD (accepts any cryptocurrency)
-        crypto_service = CryptoBotService()
-        payment_address = crypto_service.generate_payment_address(
-            usd_amount,
-            transaction.id
-        )
-
-        if not payment_address:
-            transaction.status = TransactionStatus.FAILED
+            # Create transaction record
+            transaction = Transaction(
+                user_id=user.id,
+                amount=usd_amount,
+                payment_method=PaymentMethod.CRYPTO_WALLET,
+                status=TransactionStatus.PENDING,
+                expires_at=calculate_expiry_time(app_settings.PAYMENT_EXPIRY_HOURS)
+            )
+            session.add(transaction)
             session.commit()
-            await query.edit_message_text("❌ Failed to generate payment invoice. Please try again.")
-            return ConversationHandler.END
+            session.refresh(transaction)
 
-        # Update transaction with crypto address (format: "invoice_id|pay_url")
-        transaction.crypto_address = payment_address
-        session.commit()
+            # Generate payment invoice in USD (accepts any cryptocurrency)
+            crypto_service = CryptoBotService()
+            payment_address = crypto_service.generate_payment_address(
+                usd_amount,
+                transaction.id
+            )
 
-        # Extract pay_url from payment_address
-        if "|" in payment_address:
-            invoice_id, pay_url = payment_address.split("|", 1)
-            logger.info("Invoice created: ID=%s, URL=%s", invoice_id, pay_url)
-        else:
-            # Fallback for unexpected format
-            pay_url = payment_address
+            if not payment_address:
+                transaction.status = TransactionStatus.FAILED
+                session.commit()
+                return "❌ Failed to generate payment invoice. Please try again.", None
 
-        # Show payment instructions
-        message = f"""💬 CryptoBot Payment
+            # Update transaction with crypto address (format: "invoice_id|pay_url")
+            transaction.crypto_address = payment_address
+            session.commit()
+
+            # Extract pay_url from payment_address
+            if "|" in payment_address:
+                invoice_id, pay_url = payment_address.split("|", 1)
+                logger.info("Invoice created: ID=%s, URL=%s", invoice_id, pay_url)
+            else:
+                # Fallback for unexpected format
+                pay_url = payment_address
+
+            message = f"""💬 CryptoBot Payment
 
 💰 Amount: {format_price(usd_amount)}
 🆔 Order ID: #{transaction.id}
@@ -222,14 +237,14 @@ The system will automatically verify and add ${usd_amount:.2f} to your balance a
 
 ⏰ This order will expire in 30 Minutes."""
 
-        # Create keyboard with payment button
-        keyboard = [
-            [InlineKeyboardButton("💳 Pay with Any Crypto", url=pay_url)],
-            [InlineKeyboardButton("❌ Cancel", callback_data="cancel")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+            keyboard = [
+                [InlineKeyboardButton("💳 Pay with Any Crypto", url=pay_url)],
+                [InlineKeyboardButton("❌ Cancel", callback_data="cancel")]
+            ]
+            return message, InlineKeyboardMarkup(keyboard)
 
-        await query.edit_message_text(message, reply_markup=reply_markup)
+    message, reply_markup = await asyncio.to_thread(_sync)
+    await query.edit_message_text(message, reply_markup=reply_markup)
 
     return ConversationHandler.END
 
@@ -254,25 +269,30 @@ async def payment_method_card(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text("❌ Invalid amount. Please start the top-up again.")
         return ConversationHandler.END
 
-    # Create a pending transaction; its id is carried in the invoice payload.
-    # Card transactions have no expires_at: confirmation arrives via Telegram's
-    # successful_payment update, so the expiry job should not touch them.
-    with get_db_session() as session:
-        user = session.query(User).filter_by(telegram_id=user_id).first()
-        if not user:
-            await query.edit_message_text("❌ User not found.")
-            return ConversationHandler.END
+    def _sync():
+        # Create a pending transaction; its id is carried in the invoice payload.
+        # Card transactions have no expires_at: confirmation arrives via Telegram's
+        # successful_payment update, so the expiry job should not touch them.
+        with get_db_session() as session:
+            user = session.query(User).filter_by(telegram_id=user_id).first()
+            if not user:
+                return None
 
-        transaction = Transaction(
-            user_id=user.id,
-            amount=usd_amount,
-            payment_method=PaymentMethod.CARD,
-            status=TransactionStatus.PENDING
-        )
-        session.add(transaction)
-        session.commit()
-        session.refresh(transaction)
-        transaction_id = transaction.id
+            transaction = Transaction(
+                user_id=user.id,
+                amount=usd_amount,
+                payment_method=PaymentMethod.CARD,
+                status=TransactionStatus.PENDING
+            )
+            session.add(transaction)
+            session.commit()
+            session.refresh(transaction)
+            return transaction.id
+
+    transaction_id = await asyncio.to_thread(_sync)
+    if transaction_id is None:
+        await query.edit_message_text("❌ User not found.")
+        return ConversationHandler.END
 
     # Replace the method-selection message with a short notice, then send the invoice.
     try:
@@ -320,14 +340,16 @@ async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
     is_valid = False
     if transaction_id is not None:
-        with get_db_session() as session:
-            transaction = session.query(Transaction).filter_by(
-                id=transaction_id,
-                payment_method=PaymentMethod.CARD
-            ).first()
-            # Allow if not already credited (PENDING, or EXPIRED for a late-but-honoured pay).
-            if transaction and transaction.status != TransactionStatus.COMPLETED:
-                is_valid = True
+        def _sync():
+            with get_db_session() as session:
+                transaction = session.query(Transaction).filter_by(
+                    id=transaction_id,
+                    payment_method=PaymentMethod.CARD
+                ).first()
+                # Allow if not already credited (PENDING, or EXPIRED for a late-but-honoured pay).
+                return bool(transaction and transaction.status != TransactionStatus.COMPLETED)
+
+        is_valid = await asyncio.to_thread(_sync)
 
     if is_valid:
         await query.answer(ok=True)
@@ -351,35 +373,38 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
     except (ValueError, IndexError):
         return
 
-    notif = None
-    with get_db_session() as session:
-        transaction = session.query(Transaction).filter_by(
-            id=transaction_id,
-            payment_method=PaymentMethod.CARD
-        ).first()
+    def _sync():
+        with get_db_session() as session:
+            transaction = session.query(Transaction).filter_by(
+                id=transaction_id,
+                payment_method=PaymentMethod.CARD
+            ).first()
 
-        if not transaction:
-            return
+            if not transaction:
+                return None
 
-        # Idempotency guard: never double-credit a completed transaction.
-        if transaction.status == TransactionStatus.COMPLETED:
-            return
+            # Idempotency guard: never double-credit a completed transaction.
+            if transaction.status == TransactionStatus.COMPLETED:
+                return None
 
-        transaction.status = TransactionStatus.COMPLETED
-        transaction.completed_at = datetime.utcnow()
-        # Store Telegram's charge id in crypto_address for reference.
-        transaction.crypto_address = f"tg_charge:{payment.telegram_payment_charge_id}"
+            transaction.status = TransactionStatus.COMPLETED
+            transaction.completed_at = datetime.utcnow()
+            # Store Telegram's charge id in crypto_address for reference.
+            transaction.crypto_address = f"tg_charge:{payment.telegram_payment_charge_id}"
 
-        user = session.query(User).filter_by(id=transaction.user_id).first()
-        if user:
-            user.wallet_balance = to_money(user.wallet_balance + transaction.amount)
-            session.commit()
-            notif = {
-                'telegram_id': user.telegram_id,
-                'amount': transaction.amount,
-                'new_balance': user.wallet_balance,
-                'transaction_id': transaction.id
-            }
+            user = session.query(User).filter_by(id=transaction.user_id).first()
+            if user:
+                user.wallet_balance = to_money(user.wallet_balance + transaction.amount)
+                session.commit()
+                return {
+                    'telegram_id': user.telegram_id,
+                    'amount': transaction.amount,
+                    'new_balance': user.wallet_balance,
+                    'transaction_id': transaction.id
+                }
+            return None
+
+    notif = await asyncio.to_thread(_sync)
 
     if not notif:
         return
@@ -440,7 +465,6 @@ async def cancel_payment_page(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def check_pending_payments(context: ContextTypes.DEFAULT_TYPE):
     """Background job to check pending payment transactions (non-blocking)."""
-    import asyncio
 
     def _check_and_process_payments_sync():
         """Synchronous database operations run in thread pool."""
@@ -531,7 +555,6 @@ Thank you for your payment!"""
 
 async def check_expired_payments(context: ContextTypes.DEFAULT_TYPE):
     """Background job to mark expired payment transactions (non-blocking)."""
-    import asyncio
 
     def _check_expired_sync():
         """Synchronous database operations run in thread pool."""
@@ -591,7 +614,7 @@ async def buy_product_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Check if user is banned
     if await check_user_banned_async(telegram_id):
-        lang = _get_user_lang(telegram_id)
+        lang = await _get_user_lang_async(telegram_id)
         await query.edit_message_text(t('purchase.banned', lang))
         return ConversationHandler.END
 
@@ -602,57 +625,69 @@ async def buy_product_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ Invalid request.")
         return ConversationHandler.END
 
-    with get_db_session() as session:
-        lang = session.query(User.language).filter_by(telegram_id=telegram_id).scalar() or DEFAULT_LANG
-        product = session.query(Product).filter_by(id=product_id).first()
+    def _sync():
+        with get_db_session() as session:
+            lang = session.query(User.language).filter_by(telegram_id=telegram_id).scalar() or DEFAULT_LANG
+            product = session.query(Product).filter_by(id=product_id).first()
 
-        if not product:
-            await query.edit_message_text("❌ Product not found.")
-            return ConversationHandler.END
+            if not product:
+                return "not_found", None
+            if not product.is_active:
+                return "inactive", None
+            if product.stock_count == 0:
+                return "out_of_stock", None
 
-        if not product.is_active:
-            await query.edit_message_text("❌ This product is no longer available.")
-            return ConversationHandler.END
+            return "ok", (product.name, product.price, product.stock_count, product.product_type, lang)
 
-        if product.stock_count == 0:
-            await query.edit_message_text("❌ This product is out of stock.")
-            return ConversationHandler.END
+    status, data = await asyncio.to_thread(_sync)
 
-        # Store product info in context for later
-        context.user_data['purchase_product_id'] = product_id
-        context.user_data['purchase_product_name'] = product.name
-        context.user_data['purchase_product_price'] = product.price
-        context.user_data['purchase_product_stock'] = product.stock_count
-        context.user_data['purchase_product_type'] = product.product_type
+    if status == "not_found":
+        await query.edit_message_text("❌ Product not found.")
+        return ConversationHandler.END
+    if status == "inactive":
+        await query.edit_message_text("❌ This product is no longer available.")
+        return ConversationHandler.END
+    if status == "out_of_stock":
+        await query.edit_message_text("❌ This product is out of stock.")
+        return ConversationHandler.END
 
-        # For file products, quantity is always 1
-        if product.product_type == ProductType.FILE:
-            context.user_data['purchase_quantity'] = 1
-            # Skip quantity input, go straight to confirmation
-            return await show_purchase_confirmation(update, context)
+    product_name, product_price, product_stock, product_type, lang = data
 
-        # For key products, ask for quantity
-        message = t(
-            'purchase.quantity_prompt', lang,
-            product_name=product.name,
-            price=format_price(product.price),
-            stock=product.stock_count,
+    # Store product info in context for later
+    context.user_data['purchase_product_id'] = product_id
+    context.user_data['purchase_product_name'] = product_name
+    context.user_data['purchase_product_price'] = product_price
+    context.user_data['purchase_product_stock'] = product_stock
+    context.user_data['purchase_product_type'] = product_type
+
+    # For file products, quantity is always 1
+    if product_type == ProductType.FILE:
+        context.user_data['purchase_quantity'] = 1
+        # Skip quantity input, go straight to confirmation
+        return await show_purchase_confirmation(update, context)
+
+    # For key products, ask for quantity
+    message = t(
+        'purchase.quantity_prompt', lang,
+        product_name=product_name,
+        price=format_price(product_price),
+        stock=product_stock,
+    )
+
+    # If coming from a photo message, delete it and create new text message
+    if query.message.photo:
+        await query.message.delete()
+        await query.message.reply_text(
+            message,
+            reply_markup=create_quantity_keyboard(product_id)
+        )
+    else:
+        await query.edit_message_text(
+            message,
+            reply_markup=create_quantity_keyboard(product_id)
         )
 
-        # If coming from a photo message, delete it and create new text message
-        if query.message.photo:
-            await query.message.delete()
-            await query.message.reply_text(
-                message,
-                reply_markup=create_quantity_keyboard(product_id)
-            )
-        else:
-            await query.edit_message_text(
-                message,
-                reply_markup=create_quantity_keyboard(product_id)
-            )
-
-        return PURCHASE_QUANTITY
+    return PURCHASE_QUANTITY
 
 
 async def purchase_quantity_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -707,55 +742,60 @@ async def show_purchase_confirmation(update: Update, context: ContextTypes.DEFAU
     total = to_money(product_price * quantity)
     telegram_id = update.effective_user.id
 
-    with get_db_session() as session:
-        user = session.query(User).filter_by(telegram_id=telegram_id).first()
-        if not user:
-            if is_message:
-                await update.message.reply_text("❌ User not found.")
-            else:
-                await update.callback_query.edit_message_text("❌ User not found.")
-            return ConversationHandler.END
+    def _sync():
+        with get_db_session() as session:
+            user = session.query(User).filter_by(telegram_id=telegram_id).first()
+            if not user:
+                return None
+            return user.wallet_balance, user.language
 
-        wallet_balance = user.wallet_balance
-        lang = user.language
-        has_sufficient_balance = wallet_balance >= total
-
-        if has_sufficient_balance:
-            balance_text = t('main_menu.wallet_balance', lang, balance=format_price(wallet_balance))
-        else:
-            balance_text = t('purchase.insufficient_balance', lang, balance=format_price(wallet_balance))
-
-        title = t(
-            'purchase.confirm_title', lang,
-            product_name=product_name, price=format_price(product_price),
-            quantity=quantity, total=format_price(total),
-        )
-        message = f"{title}\n\n{balance_text}"
-
-        if has_sufficient_balance:
-            keyboard = [
-                [InlineKeyboardButton(t('purchase.button.confirm', lang), callback_data=f"confirm_purchase_{product_id}_{quantity}")],
-                [InlineKeyboardButton(t('purchase.button.cancel', lang), callback_data="cancel_purchase")]
-            ]
-        else:
-            keyboard = [
-                [InlineKeyboardButton(t('purchase.button.topup_wallet', lang), callback_data="topup")],
-                [InlineKeyboardButton(t('purchase.button.cancel', lang), callback_data="cancel_purchase")]
-            ]
-
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
+    result = await asyncio.to_thread(_sync)
+    if result is None:
         if is_message:
-            await update.message.reply_text(message, reply_markup=reply_markup)
+            await update.message.reply_text("❌ User not found.")
         else:
-            query = update.callback_query
-            if query.message.photo:
-                await query.message.delete()
-                await query.message.reply_text(message, reply_markup=reply_markup)
-            else:
-                await query.edit_message_text(message, reply_markup=reply_markup)
-
+            await update.callback_query.edit_message_text("❌ User not found.")
         return ConversationHandler.END
+
+    wallet_balance, lang = result
+    has_sufficient_balance = wallet_balance >= total
+
+    if has_sufficient_balance:
+        balance_text = t('main_menu.wallet_balance', lang, balance=format_price(wallet_balance))
+    else:
+        balance_text = t('purchase.insufficient_balance', lang, balance=format_price(wallet_balance))
+
+    title = t(
+        'purchase.confirm_title', lang,
+        product_name=product_name, price=format_price(product_price),
+        quantity=quantity, total=format_price(total),
+    )
+    message = f"{title}\n\n{balance_text}"
+
+    if has_sufficient_balance:
+        keyboard = [
+            [InlineKeyboardButton(t('purchase.button.confirm', lang), callback_data=f"confirm_purchase_{product_id}_{quantity}")],
+            [InlineKeyboardButton(t('purchase.button.cancel', lang), callback_data="cancel_purchase")]
+        ]
+    else:
+        keyboard = [
+            [InlineKeyboardButton(t('purchase.button.topup_wallet', lang), callback_data="topup")],
+            [InlineKeyboardButton(t('purchase.button.cancel', lang), callback_data="cancel_purchase")]
+        ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if is_message:
+        await update.message.reply_text(message, reply_markup=reply_markup)
+    else:
+        query = update.callback_query
+        if query.message.photo:
+            await query.message.delete()
+            await query.message.reply_text(message, reply_markup=reply_markup)
+        else:
+            await query.edit_message_text(message, reply_markup=reply_markup)
+
+    return ConversationHandler.END
 
 
 async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -770,7 +810,7 @@ async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     if await check_user_banned_async(update.effective_user.id):
-        await query.edit_message_text(t('purchase.banned', _get_user_lang(update.effective_user.id)))
+        await query.edit_message_text(t('purchase.banned', await _get_user_lang_async(update.effective_user.id)))
         return
 
     # Extract product_id and quantity from callback data (format: confirm_purchase_123_5)
@@ -788,37 +828,32 @@ async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     telegram_id = update.effective_user.id
-    result = None
 
-    try:
+    def _sync():
         with get_db_session() as session:
             # SELECT ... FOR UPDATE where the backend supports it, so two rapid
             # taps on "Confirm Purchase" cannot both pass the balance check.
             user = session.query(User).filter_by(telegram_id=telegram_id).with_for_update().first()
             if not user:
-                await query.edit_message_text("❌ User not found.")
-                return
+                return "error", "❌ User not found."
 
             product = session.query(Product).filter_by(id=product_id).with_for_update().first()
             if not product:
-                await query.edit_message_text("❌ Product not found.")
-                return
+                return "error", "❌ Product not found."
 
             if not product.is_active:
-                await query.edit_message_text("❌ This product is no longer available.")
-                return
+                return "error", "❌ This product is no longer available."
 
             if product.stock_count < quantity:
-                await query.edit_message_text(f"❌ Not enough stock. Only {product.stock_count} available.")
-                return
+                return "error", f"❌ Not enough stock. Only {product.stock_count} available."
 
             total = to_money(product.price * quantity)
 
             if user.wallet_balance < total:
-                await query.edit_message_text(
-                    f"❌ Insufficient balance.\n💰 Your balance: {format_price(user.wallet_balance)}\n💵 Required: {format_price(total)}"
+                return "error", (
+                    f"❌ Insufficient balance.\n💰 Your balance: {format_price(user.wallet_balance)}\n"
+                    f"💵 Required: {format_price(total)}"
                 )
-                return
 
             # Reserve the keys FIRST: if inventory does not actually back the
             # advertised stock_count, we bail out before charging anyone.
@@ -835,10 +870,7 @@ async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     # Re-sync the advertised stock with reality.
                     product.stock_count = len(available_keys)
                     session.commit()
-                    await query.edit_message_text(
-                        f"❌ Not enough keys in stock. Only {len(available_keys)} available."
-                    )
-                    return
+                    return "error", f"❌ Not enough keys in stock. Only {len(available_keys)} available."
                 assigned_keys = available_keys
 
             order = Order(
@@ -877,12 +909,15 @@ async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # commit happens on context-manager exit; a failure anywhere above
             # rolls the whole thing back.
 
-            result = {
+            return "ok", {
                 'order_id': order.id,
                 'total': total,
                 'details': order_details,
                 'lang': user.language,
             }
+
+    try:
+        status, payload = await asyncio.to_thread(_sync)
     except Exception:
         logger.exception("Purchase failed for user %s", telegram_id)
         await query.edit_message_text(
@@ -891,8 +926,11 @@ async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    if not result:
+    if status == "error":
+        await query.edit_message_text(payload)
         return
+
+    result = payload
 
     user_message = t(
         'purchase.success', result['lang'],
@@ -926,7 +964,7 @@ async def cancel_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     from utils import create_main_menu_keyboard
 
-    lang = _get_user_lang(update.effective_user.id)
+    lang = await _get_user_lang_async(update.effective_user.id)
 
     # Clear purchase data
     context.user_data.pop('purchase_product_id', None)
@@ -946,7 +984,6 @@ async def cancel_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def broadcast_availability_to_all_users(context: ContextTypes.DEFAULT_TYPE):
     """Scheduled job to broadcast availability to all users every 12 hours (non-blocking with rate limiting)."""
-    import asyncio
     from utils import build_availability_text
 
     logger.info("Starting availability broadcast to all users...")
@@ -1001,7 +1038,6 @@ async def broadcast_availability_to_all_users(context: ContextTypes.DEFAULT_TYPE
     logger.info(f"Broadcasting availability to {len(user_ids)} users...")
 
     # Create availability keyboard
-    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     keyboard = [
         [InlineKeyboardButton("🛒 Browse Products", callback_data="products")],
         [InlineKeyboardButton("🔙 Main Menu", callback_data="main_menu")]
