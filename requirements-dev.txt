@@ -1,0 +1,12 @@
+# Development / CI-only dependencies. Not needed to run the bot in production
+# (see requirements.txt for that) - install with:
+#   pip install -r requirements.txt -r requirements-dev.txt
+
+-r requirements.txt
+
+# --- Tests -----------------------------------------------------------------
+pytest==8.3.3
+pytest-asyncio==0.24.0
+
+# --- Lint / format -----------------------------------------------------------
+ruff==0.7.4

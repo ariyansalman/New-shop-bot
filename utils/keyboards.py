@@ -1,7 +1,6 @@
 """Inline keyboard utilities for the Telegram bot."""
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from config.settings import settings
 
 
 def create_main_menu_keyboard():

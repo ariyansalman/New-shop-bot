@@ -8,6 +8,10 @@ SQLAlchemy==2.0.35
 # PostgreSQL driver for Supabase. psycopg2-binary ships prebuilt wheels, so
 # Railway does not need to compile anything.
 psycopg2-binary==2.9.9
+# Schema migrations. `alembic upgrade head` is run as a release step (see
+# DEPLOY.md); init_db()'s create_all() is a dev-only fallback for a brand
+# new empty database and never alters an existing table.
+alembic==1.13.3
 
 # --- HTTP / config --------------------------------------------------------
 requests==2.32.3

@@ -9,7 +9,6 @@ from telegram.ext import (
     ConversationHandler, PreCheckoutQueryHandler
 )
 from config import settings, validate_settings
-from database import init_db
 from database.init_data import initialize_database
 from handlers import user_handlers, admin_handlers, payment_handlers, admin_conversations, dispute_handlers
 

@@ -8,7 +8,7 @@ from database import (
     ProductKey, TransactionStatus, OrderStatus, PaymentMethod, ProductType
 )
 from utils import (
-    get_or_create_user, format_price, validate_amount,
+    format_price, validate_amount,
     create_cancel_keyboard, create_payment_method_keyboard,
     create_quantity_keyboard, create_main_menu_keyboard,
     calculate_expiry_time, notify_admin, check_user_banned
@@ -863,7 +863,7 @@ async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 'total': total,
                 'details': order_details,
             }
-    except Exception as e:
+    except Exception:
         import logging
         logging.getLogger(__name__).exception("Purchase failed for user %s", telegram_id)
         await query.edit_message_text(

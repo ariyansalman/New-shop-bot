@@ -1,17 +1,16 @@
 """User-facing command and callback handlers."""
 
 import os
-from telegram import Update, InputFile, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from database import get_db_session, User, Category, Subcategory, Product, Order, OrderItem, Settings, ProductType, OrderStatus, DisputeStatus
 from utils import (
-    get_or_create_user, format_price, format_datetime, create_main_menu_keyboard,
+    format_price, format_datetime, create_main_menu_keyboard,
     create_pagination_keyboard, create_product_detail_keyboard,
     create_support_keyboard, check_user_banned,
     paginate_items, format_product_display, build_availability_text,
     create_back_support_keyboard
 )
-from config.settings import settings as app_settings
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -271,12 +270,12 @@ async def category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_products_list(query, category_id=None, subcategory_id=None, page=0, context=None):
     """Show list of products for a category or subcategory."""
     with get_db_session() as session:
-        query_filter = Product.is_active == True
+        query_filter = Product.is_active.is_(True)
 
         if category_id:
             products = session.query(Product).filter(
                 Product.category_id == category_id,
-                Product.subcategory_id == None,
+                Product.subcategory_id.is_(None),
                 query_filter
             ).all()
         elif subcategory_id:

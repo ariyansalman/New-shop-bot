@@ -33,7 +33,7 @@ response = requests.get(
 )
 
 print(f"Status Code: {response.status_code}")
-print(f"\nFull Response:")
+print("\nFull Response:")
 print(response.json())
 
 if response.status_code == 200:

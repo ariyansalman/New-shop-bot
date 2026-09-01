@@ -78,7 +78,6 @@ class CryptoBotService:
                 result = data.get("result", {})
                 # Get invoice ID and payment URL
                 invoice_id = result.get("invoice_id", "")  # Numeric ID for API calls
-                invoice_hash = result.get("hash", "")      # Hash for URLs
                 bot_invoice_url = result.get("bot_invoice_url", "")
                 mini_app_url = result.get("mini_app_invoice_url", "")
                 pay_url = bot_invoice_url or mini_app_url
@@ -96,7 +95,7 @@ class CryptoBotService:
                 logger.error("CryptoBot API error: %s", response.status_code)
                 return None
 
-        except Exception as e:
+        except Exception:
             logger.exception("Error generating crypto payment invoice")
             return None
 

@@ -1,0 +1,20 @@
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+exclude = ["migrations/versions"]
+
+[tool.ruff.lint]
+# Keep this intentionally narrow: the codebase predates linting, so start
+# with correctness/bug-risk checks rather than full style enforcement.
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes (unused imports/vars, undefined names, etc.)
+    "B",   # flake8-bugbear (common bug patterns)
+]
+ignore = [
+    "E501",  # line length is handled by line-length above, not worth failing CI on
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

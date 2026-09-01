@@ -332,7 +332,6 @@ async def product_download_link(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def product_keys(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle product keys input for KEY products (text or file upload)."""
-    from database import ProductKey
     from utils import parse_keys_from_text
 
     # Create cancel button for error messages
@@ -867,7 +866,6 @@ async def edit_category_value(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         session.commit()
 
-        from utils import create_admin_category_menu_keyboard
         keyboard = [
             [InlineKeyboardButton("✏️ Edit Another Category", callback_data="admin_edit_category")],
             [InlineKeyboardButton("🔙 Back to Category Menu", callback_data="admin_manage_categories")]
@@ -1150,7 +1148,7 @@ async def edit_subcategory_value(update: Update, context: ContextTypes.DEFAULT_T
 
         if field == 'category':
             await query.edit_message_text(
-                f"✅ Subcategory parent category updated successfully!",
+                "✅ Subcategory parent category updated successfully!",
                 reply_markup=reply_markup
             )
         else:
@@ -1639,7 +1637,7 @@ async def edit_image_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup = InlineKeyboardMarkup(keyboard)
 
                 await query.edit_message_text(
-                    f"✅ Product image removed successfully!",
+                    "✅ Product image removed successfully!",
                     reply_markup=reply_markup
                 )
 
@@ -1680,7 +1678,7 @@ async def edit_image_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup = InlineKeyboardMarkup(keyboard)
 
             await update.message.reply_text(
-                f"✅ Product image updated successfully!",
+                "✅ Product image updated successfully!",
                 reply_markup=reply_markup
             )
 
@@ -1853,8 +1851,8 @@ async def broadcast_text_message(update: Update, context: ContextTypes.DEFAULT_T
             fail_count += 1
 
     # Show results
-    result_msg = f"✅ Broadcast Complete!\n\n"
-    result_msg += f"📊 Results:\n"
+    result_msg = "✅ Broadcast Complete!\n\n"
+    result_msg += "📊 Results:\n"
     result_msg += f"✅ Sent successfully: {success_count}\n"
     result_msg += f"❌ Failed: {fail_count}\n"
     result_msg += f"👥 Total users: {len(recipient_ids)}"
@@ -1960,8 +1958,8 @@ async def broadcast_image_text(update: Update, context: ContextTypes.DEFAULT_TYP
             fail_count += 1
 
     # Show results
-    result_msg = f"✅ Broadcast Complete!\n\n"
-    result_msg += f"📊 Results:\n"
+    result_msg = "✅ Broadcast Complete!\n\n"
+    result_msg += "📊 Results:\n"
     result_msg += f"✅ Sent successfully: {success_count}\n"
     result_msg += f"❌ Failed: {fail_count}\n"
     result_msg += f"👥 Total users: {len(recipient_ids)}"
@@ -2113,7 +2111,7 @@ async def store_logo_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if settings.store_logo_path and os.path.exists(settings.store_logo_path):
             try:
                 os.remove(settings.store_logo_path)
-            except:
+            except OSError:
                 pass
         
         settings.store_logo_path = file_path

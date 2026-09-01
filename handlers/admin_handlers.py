@@ -1,14 +1,13 @@
 """Admin panel command and callback handlers."""
 
-import os
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from sqlalchemy import func
 from database import (
     get_db_session, User, Category, Subcategory, Product, ProductKey,
-    Order, OrderItem, Settings, Broadcast, Transaction,
-    ProductType, OrderStatus, DisputeStatus, TransactionStatus
+    Order, OrderItem, Transaction,
+    ProductType, OrderStatus, TransactionStatus
 )
 from utils import (
     is_admin, admin_only, format_price,
@@ -17,7 +16,6 @@ from utils import (
     create_admin_order_menu_keyboard, create_admin_settings_menu_keyboard,
     create_admin_broadcast_menu_keyboard, parse_keys_from_text, clear_ban_cache
 )
-from config.settings import settings as app_settings
 from telegram.ext import ConversationHandler
 
 # Conversation states for restock keys
@@ -425,7 +423,7 @@ async def admin_user_detail_callback(update: Update, context: ContextTypes.DEFAU
         status = "🚫 Banned" if user.is_banned else "✅ Active"
         username_display = f"@{user.username}" if user.username else "N/A"
 
-        message = f"👤 User Details\n\n"
+        message = "👤 User Details\n\n"
         message += f"Telegram ID: {user.telegram_id}\n"
         message += f"Username: {username_display}\n"
         message += f"Balance: {format_price(user.wallet_balance)}\n"
@@ -503,7 +501,7 @@ async def admin_ban_user_callback(update: Update, context: ContextTypes.DEFAULT_
         status = "🚫 Banned" if user.is_banned else "✅ Active"
         username_display = f"@{user.username}" if user.username else "N/A"
 
-        message = f"👤 User Details\n\n"
+        message = "👤 User Details\n\n"
         message += f"Telegram ID: {user.telegram_id}\n"
         message += f"Username: {username_display}\n"
         message += f"Balance: {format_price(user.wallet_balance)}\n"
@@ -579,7 +577,7 @@ async def admin_unban_user_callback(update: Update, context: ContextTypes.DEFAUL
         status = "🚫 Banned" if user.is_banned else "✅ Active"
         username_display = f"@{user.username}" if user.username else "N/A"
 
-        message = f"👤 User Details\n\n"
+        message = "👤 User Details\n\n"
         message += f"Telegram ID: {user.telegram_id}\n"
         message += f"Username: {username_display}\n"
         message += f"Balance: {format_price(user.wallet_balance)}\n"
