@@ -11,7 +11,8 @@ from telegram.ext import (
 from config import settings, validate_settings, init_sentry
 from database.init_data import initialize_database
 from handlers import (user_handlers, admin_handlers, payment_handlers,
-                      admin_conversations, dispute_handlers, binance_pay_handlers)
+                      admin_conversations, dispute_handlers, binance_pay_handlers,
+                      binance_admin)
 
 # M""M M"""""""`YM M""""""'YMM M"""""`'"""`YM M""""""'YMM MM""""""""`M M""MMMMM""M 
 # M  M M  mmmm.  M M  mmmm. `M M  mm.  mm.  M M  mmmm. `M MM  mmmmmmmM M  MMMMM  M 
@@ -518,6 +519,21 @@ def build_application(post_init=None):
     application.add_handler(CallbackQueryHandler(
         binance_pay_handlers.binance_cancel_order, pattern="^binance_cancel_"))
 
+    # Binance admin panel. Every one of these re-checks is_admin() itself -
+    # the pattern is not the authorization.
+    application.add_handler(CallbackQueryHandler(
+        binance_admin.binance_admin_menu, pattern="^binadmin_menu$"))
+    application.add_handler(CallbackQueryHandler(
+        binance_admin.binance_admin_toggle, pattern="^binadmin_toggle$"))
+    application.add_handler(CallbackQueryHandler(
+        binance_admin.binance_admin_test, pattern="^binadmin_test$"))
+    application.add_handler(CallbackQueryHandler(
+        binance_admin.binance_admin_monitor, pattern="^binadmin_mon_"))
+    application.add_handler(CallbackQueryHandler(
+        binance_admin.binance_admin_retry, pattern="^binadmin_retry_"))
+    application.add_handler(CallbackQueryHandler(
+        binance_admin.binance_admin_close, pattern="^binadmin_close_"))
+
     # Schedule background jobs
     job_queue = application.job_queue
 
@@ -532,6 +548,18 @@ def build_application(post_init=None):
         interval=60,
         first=30
     )
+
+    # Binance top-ups whose id was submitted but did not resolve first time.
+    # Same queue as the pollers above - no second scheduler. Far slower than
+    # the CryptoBot poll because the Pay history endpoint is Weight(UID) 3000.
+    if binance_pay_handlers.binance_pay_available():
+        logger.info("Scheduling Binance verification retry job (every %ss)",
+                    settings.BINANCE_VERIFY_RETRY_INTERVAL)
+        job_queue.run_repeating(
+            binance_pay_handlers.retry_pending_binance_payments,
+            interval=settings.BINANCE_VERIFY_RETRY_INTERVAL,
+            first=settings.BINANCE_VERIFY_RETRY_INTERVAL,
+        )
 
     # Availability broadcast job - runs every 12 hours (43200 seconds)
     # NOTE: this used to fire 10 seconds after every restart, so each restart
@@ -564,6 +592,11 @@ def main():
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
         return
+
+    # Load the Binance kill switch once, before any update is served, so
+    # binance_pay_available() never has to touch the database from the
+    # event loop.
+    binance_pay_handlers.refresh_admin_toggle()
 
     application = build_application()
 

@@ -561,8 +561,20 @@ async def check_expired_payments(context: ContextTypes.DEFAULT_TYPE):
         expired_notifications = []
 
         with get_db_session() as session:
-            pending_transactions = session.query(Transaction).filter_by(
-                status=TransactionStatus.PENDING
+            # A Binance top-up whose owner has already submitted a Binance
+            # transaction id is deliberately exempt: real money has left the
+            # user's account, and the id can legitimately take longer than
+            # the 30-minute checkout window to show up in Binance's Pay
+            # history. Expiring it here would strand a paid order that the
+            # retry job would otherwise still settle. Its own bound is the
+            # BINANCE_MAX_VERIFY_ATTEMPTS budget, which ends in
+            # MANUAL_REVIEW rather than a silent EXPIRED.
+            pending_transactions = session.query(Transaction).filter(
+                Transaction.status == TransactionStatus.PENDING,
+                ~(
+                    (Transaction.payment_method == PaymentMethod.BINANCE_PAY)
+                    & (Transaction.provider_transaction_id.isnot(None))
+                ),
             ).all()
 
             for transaction in pending_transactions:

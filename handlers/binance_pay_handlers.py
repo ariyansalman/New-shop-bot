@@ -23,17 +23,19 @@ two verifications race.
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 
 from database import (
-    get_db_session, User, Transaction, TransactionStatus, PaymentMethod
+    get_db_session, User, Transaction, TransactionStatus, PaymentMethod,
+    Settings as StoreSettings,
 )
 from config.settings import settings
 from services.binance_pay import get_service, VerificationOutcome
 from utils import notify_admin, to_money
+from utils.audit import log_admin_action
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +50,76 @@ BINANCE_ORDER_ID = 20
 # junk early so we do not spend a Weight-3000 API call on it.
 _MAX_ID_LENGTH = 64
 
+# Ceiling on how many rows one retry pass verifies. Each row costs a
+# Weight(UID) 3000 call, so an unbounded backlog could burn the whole API
+# quota in a single tick and lock the account out of verifying anything.
+_RETRY_BATCH_SIZE = 10
+
+
+# Cache of Settings.binance_pay_enabled, the admin kill switch.
+#
+# binance_pay_available() is called from keyboard builders that run on the
+# event loop, so it must not touch the database - that is exactly the
+# blocking-IO pattern the rest of this codebase moves into threads. The
+# flag lives in one process, is written only by the admin toggle below,
+# and is loaded once at startup, so a plain module global is enough.
+_admin_toggle = True
+
+
+def _read_admin_toggle_sync() -> bool:
+    """Load the kill switch from the database. Call from a thread."""
+    global _admin_toggle
+    with get_db_session() as session:
+        row = session.query(StoreSettings.binance_pay_enabled).first()
+        _admin_toggle = True if row is None else bool(row[0])
+    return _admin_toggle
+
+
+def _write_admin_toggle_sync(enabled: bool, admin_telegram_id: int) -> bool:
+    """Persist the kill switch and update the cache. Call from a thread."""
+    global _admin_toggle
+    with get_db_session() as session:
+        row = session.query(StoreSettings).first()
+        if row is None:
+            row = StoreSettings()
+            session.add(row)
+        row.binance_pay_enabled = enabled
+        log_admin_action(
+            session, admin_telegram_id,
+            "binance_pay_enable" if enabled else "binance_pay_disable",
+            target_type="settings",
+        )
+        session.commit()
+    _admin_toggle = enabled
+    return enabled
+
+
+def refresh_admin_toggle() -> bool:
+    """Load the kill switch at startup, before any update is served."""
+    try:
+        return _read_admin_toggle_sync()
+    except Exception:
+        # A settings table that predates the column, or an unreachable
+        # database at boot. Fail open to the environment configuration:
+        # this switch exists to disable a working method, not to be a
+        # second thing that can silently break a working one.
+        logger.warning("Could not load the Binance kill switch - using the "
+                       "environment configuration only", exc_info=True)
+        return _admin_toggle
+
+
+def binance_configured() -> bool:
+    """Whether the environment could verify a Binance payment at all.
+
+    Separate from binance_pay_available() so the admin panel can tell
+    "no credentials" apart from "an admin switched it off".
+    """
+    if not settings.BINANCE_PAY_ENABLED or not settings.BINANCE_PAY_ID:
+        return False
+    if settings.BINANCE_TEST_MODE:
+        return True
+    return bool(settings.BINANCE_API_KEY and settings.BINANCE_API_SECRET)
+
 
 def binance_pay_available() -> bool:
     """Whether to offer Binance Pay at all.
@@ -55,11 +127,7 @@ def binance_pay_available() -> bool:
     Hidden unless it is switched on AND actually usable, so a user can
     never reach a checkout whose payment could never be verified.
     """
-    if not settings.BINANCE_PAY_ENABLED or not settings.BINANCE_PAY_ID:
-        return False
-    if settings.BINANCE_TEST_MODE:
-        return True
-    return bool(settings.BINANCE_API_KEY and settings.BINANCE_API_SECRET)
+    return binance_configured() and _admin_toggle
 
 
 def _remaining_time(expires_at) -> str:
@@ -470,6 +538,71 @@ def _record_failure_sync(transaction_id: int, reason: str, new_status) -> bool:
 
         session.commit()
         return exhausted
+
+
+# ======================================================================
+# Background retry
+# ======================================================================
+
+async def retry_pending_binance_payments(context: ContextTypes.DEFAULT_TYPE):
+    """Re-verify Binance top-ups whose id did not resolve on first try.
+
+    Runs on the same job_queue as the CryptoBot poller - there is no second
+    scheduler. It only ever picks up rows a user already submitted an id
+    for, and it settles through the same verify_transaction() the user path
+    uses, so the credit rules exist in exactly one place.
+
+    The Pay history endpoint is Weight(UID) 3000, so this is spaced by
+    BINANCE_VERIFY_RETRY_INTERVAL rather than the CryptoBot poll interval,
+    and a row is skipped until that long has passed since its last attempt.
+    """
+    if not binance_pay_available():
+        return
+
+    def _due_sync():
+        cutoff = datetime.utcnow() - timedelta(
+            seconds=settings.BINANCE_VERIFY_RETRY_INTERVAL
+        )
+        with get_db_session() as session:
+            rows = session.query(Transaction).filter(
+                Transaction.payment_method == PaymentMethod.BINANCE_PAY,
+                Transaction.status == TransactionStatus.PENDING,
+                Transaction.provider_transaction_id.isnot(None),
+                Transaction.verification_attempts < settings.BINANCE_MAX_VERIFY_ATTEMPTS,
+            ).order_by(Transaction.created_at).limit(_RETRY_BATCH_SIZE).all()
+
+            return [
+                (t.id, t.user.telegram_id)
+                for t in rows
+                if t.last_verification_at is None or t.last_verification_at <= cutoff
+            ]
+
+    try:
+        due = await asyncio.to_thread(_due_sync)
+    except Exception:
+        logger.exception("Binance retry job could not load pending transactions")
+        return
+
+    for transaction_id, user_telegram_id in due:
+        try:
+            user_text, admin_text = await verify_transaction(transaction_id)
+        except Exception:
+            logger.exception("Binance retry failed for transaction %s", transaction_id)
+            continue
+
+        # Only tell the user something actually changed. A retry that is
+        # still waiting stays silent, otherwise a slow payment would spam
+        # the user with an identical "still pending" message every few
+        # minutes for the whole retry budget.
+        settled = user_text.startswith("✅") or user_text.startswith("❌")
+        if settled:
+            try:
+                await context.bot.send_message(chat_id=user_telegram_id, text=user_text)
+            except Exception:
+                pass  # user may have blocked the bot
+
+        if admin_text:
+            await notify_admin(context, admin_text)
 
 
 # ======================================================================

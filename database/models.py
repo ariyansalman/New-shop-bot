@@ -271,6 +271,13 @@ class Settings(Base):
     store_logo_path = Column(String(500), nullable=True)
     support_username = Column(String(255), nullable=True)
     channel_username = Column(String(255), nullable=True)
+    # Admin kill switch for Binance top-ups. It can only ever narrow what
+    # the environment already allows: the method needs BINANCE_PAY_ENABLED
+    # plus working credentials AND this flag. That way an admin can stop
+    # accepting Binance payments from Telegram during an incident without a
+    # redeploy, but cannot turn the method on for an account whose
+    # credentials the server does not have.
+    binance_pay_enabled = Column(Boolean, default=True, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 

@@ -136,6 +136,7 @@ def create_admin_main_menu_keyboard():
         [InlineKeyboardButton("🛍 Order Management", callback_data="admin_orders")],
         [InlineKeyboardButton("⚙️ Store Settings", callback_data="admin_settings")],
         [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast")],
+        [InlineKeyboardButton("🟡 Binance Pay", callback_data="binadmin_menu")],
         [InlineKeyboardButton("📜 Admin Action Log", callback_data="admin_action_log")],
         [InlineKeyboardButton("🔙 Exit Admin", callback_data="main_menu")]
     ]
