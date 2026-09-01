@@ -1,6 +1,7 @@
 """Crypto Bot API service for cryptocurrency payments."""
 
 import logging
+import time
 from decimal import Decimal
 
 import requests
@@ -9,6 +10,49 @@ from config.settings import settings
 from utils.money import money_or_none
 
 logger = logging.getLogger(__name__)
+
+# Retried once a transient failure happens: connect/read timeouts, 5xx
+# (the server didn't durably process the request) and 429 (rate limited).
+# NOT retried: 4xx other than 429 - that's a bad request on our end and
+# won't succeed on a second try.
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+_MAX_ATTEMPTS = 3
+_BACKOFF_SECONDS = (0.5, 1.5)  # delay before attempt 2, then attempt 3
+
+
+def _request_with_retry(method: str, url: str, **kwargs) -> requests.Response:
+    """requests.request() with retry-with-backoff on transient failures.
+
+    Only used for GET (check_payment_status) and the one POST
+    (generate_payment_address / createInvoice). A retried POST after a
+    timeout carries a small risk of creating a second invoice if the first
+    request actually reached CryptoBot before the client-side timeout - the
+    CryptoBot API has no idempotency-key support to close that gap. The
+    downside is bounded, though: an orphaned extra invoice, never linked to
+    a Transaction (only the last response's pay_url gets stored), which
+    just sits unused until it expires. That's a better trade-off than the
+    previous behavior of never retrying at all and just failing the top-up.
+    """
+    last_exc = None
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            response = requests.request(method, url, **kwargs)
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+            last_exc = exc
+            if attempt < _MAX_ATTEMPTS - 1:
+                logger.warning("CryptoBot API %s %s failed (%s), retrying...", method, url, exc)
+                time.sleep(_BACKOFF_SECONDS[attempt])
+                continue
+            raise
+        if response.status_code in _RETRYABLE_STATUS_CODES and attempt < _MAX_ATTEMPTS - 1:
+            logger.warning("CryptoBot API %s %s returned %s, retrying...",
+                            method, url, response.status_code)
+            time.sleep(_BACKOFF_SECONDS[attempt])
+            continue
+        return response
+    # Unreachable in practice (the loop always returns or raises), but keeps
+    # the type checker and any future refactor honest.
+    raise last_exc
 
 
 class CryptoBotService:
@@ -62,7 +106,8 @@ class CryptoBotService:
                     f"https://t.me/{settings.BOT_USERNAME}?start=payment_{transaction_id}"
                 )
 
-            response = requests.post(
+            response = _request_with_retry(
+                "POST",
                 f"{self.base_url}/createInvoice",
                 headers=headers,
                 json=payload,
@@ -148,7 +193,8 @@ class CryptoBotService:
                 # Ensure invoice_id is just the numeric ID
                 params["invoice_ids"] = str(invoice_id).strip()
 
-            response = requests.get(
+            response = _request_with_retry(
+                "GET",
                 f"{self.base_url}/getInvoices",
                 headers=headers,
                 params=params,
