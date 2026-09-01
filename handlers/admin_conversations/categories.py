@@ -1,5 +1,12 @@
-"""Category and subcategory creation and edit conversation flows."""
+"""Category and subcategory creation and edit conversation flows.
 
+Same asyncio.to_thread refactor as the other handler modules: every
+"with get_db_session()" block's query/mutation work runs in a nested
+_sync() closure off the event loop, returning only plain data, with the
+final Telegram API call left on the event loop.
+"""
+
+import asyncio
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
@@ -53,25 +60,30 @@ async def category_desc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     desc = update.message.text if update.message.text.lower() != 'skip' else ""
     context.user_data['category_desc'] = desc
 
-    # Create category
-    with get_db_session() as session:
-        category = Category(
-            name=context.user_data['category_name'],
-            description=context.user_data['category_desc']
-        )
-        session.add(category)
-        session.commit()
+    new_category_name = context.user_data['category_name']
 
-        keyboard = [
-            [InlineKeyboardButton("➕ Create Another Category", callback_data="admin_create_category")],
-            [InlineKeyboardButton("🔙 Back to Category Menu", callback_data="admin_manage_categories")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+    def _sync():
+        with get_db_session() as session:
+            category = Category(
+                name=new_category_name,
+                description=desc
+            )
+            session.add(category)
+            session.commit()
+            return category.name, category.id
 
-        await update.message.reply_text(
-            f"✅ Category '{category.name}' created successfully!\nCategory ID: #{category.id}",
-            reply_markup=reply_markup
-        )
+    cat_name, cat_id = await asyncio.to_thread(_sync)
+
+    keyboard = [
+        [InlineKeyboardButton("➕ Create Another Category", callback_data="admin_create_category")],
+        [InlineKeyboardButton("🔙 Back to Category Menu", callback_data="admin_manage_categories")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        f"✅ Category '{cat_name}' created successfully!\nCategory ID: #{cat_id}",
+        reply_markup=reply_markup
+    )
 
     context.user_data.clear()
     return ConversationHandler.END
@@ -91,24 +103,27 @@ async def create_subcategory_start(update: Update, context: ContextTypes.DEFAULT
 
     await query.answer()
 
-    # Show categories
-    with get_db_session() as session:
-        categories = session.query(Category).all()
+    def _sync():
+        with get_db_session() as session:
+            categories = session.query(Category).all()
+            return [(c.id, c.name) for c in categories]
 
-        if not categories:
-            await query.edit_message_text("❌ No categories available. Please create a category first.")
-            return ConversationHandler.END
+    categories = await asyncio.to_thread(_sync)
 
-        keyboard = []
-        for cat in categories:
-            keyboard.append([InlineKeyboardButton(cat.name, callback_data=f"subcat_cat_{cat.id}")])
-        keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel_subcat")])
+    if not categories:
+        await query.edit_message_text("❌ No categories available. Please create a category first.")
+        return ConversationHandler.END
 
-        await query.edit_message_text(
-            "📂 Create New Subcategory\n\nSelect parent category:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        return SUBCATEGORY_CATEGORY
+    keyboard = []
+    for cat_id, name in categories:
+        keyboard.append([InlineKeyboardButton(name, callback_data=f"subcat_cat_{cat_id}")])
+    keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel_subcat")])
+
+    await query.edit_message_text(
+        "📂 Create New Subcategory\n\nSelect parent category:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return SUBCATEGORY_CATEGORY
 
 
 async def subcategory_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -117,7 +132,6 @@ async def subcategory_category(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.answer()
 
     if query.data == "cancel_subcat":
-        from utils import create_admin_category_menu_keyboard
         await query.edit_message_text(
             "❌ Subcategory creation cancelled.",
             reply_markup=create_admin_category_menu_keyboard()
@@ -134,28 +148,34 @@ async def subcategory_category(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def subcategory_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle subcategory name input."""
-    # Create subcategory
-    with get_db_session() as session:
-        subcategory = Subcategory(
-            name=update.message.text,
-            category_id=context.user_data['subcategory_category']
-        )
-        session.add(subcategory)
-        session.commit()
+    new_subcategory_name = update.message.text
+    category_id = context.user_data['subcategory_category']
 
-        category = session.query(Category).filter_by(id=subcategory.category_id).first()
+    def _sync():
+        with get_db_session() as session:
+            subcategory = Subcategory(
+                name=new_subcategory_name,
+                category_id=category_id
+            )
+            session.add(subcategory)
+            session.commit()
 
-        keyboard = [
-            [InlineKeyboardButton("➕ Create Another Subcategory", callback_data="admin_create_subcategory")],
-            [InlineKeyboardButton("🔙 Back to Category Menu", callback_data="admin_manage_categories")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+            category = session.query(Category).filter_by(id=subcategory.category_id).first()
+            return subcategory.name, subcategory.id, category.name
 
-        await update.message.reply_text(
-            f"✅ Subcategory '{subcategory.name}' created under '{category.name}'!\n"
-            f"Subcategory ID: #{subcategory.id}",
-            reply_markup=reply_markup
-        )
+    subcat_name, subcat_id, cat_name = await asyncio.to_thread(_sync)
+
+    keyboard = [
+        [InlineKeyboardButton("➕ Create Another Subcategory", callback_data="admin_create_subcategory")],
+        [InlineKeyboardButton("🔙 Back to Category Menu", callback_data="admin_manage_categories")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        f"✅ Subcategory '{subcat_name}' created under '{cat_name}'!\n"
+        f"Subcategory ID: #{subcat_id}",
+        reply_markup=reply_markup
+    )
 
     context.user_data.clear()
     return ConversationHandler.END
@@ -180,52 +200,55 @@ async def edit_category_start(update: Update, context: ContextTypes.DEFAULT_TYPE
     if "_page_" in query.data:
         page = int(query.data.split("_page_")[1])
 
-    with get_db_session() as session:
-        # Get all categories
-        all_categories = session.query(Category).order_by(Category.id).all()
+    def _sync():
+        with get_db_session() as session:
+            all_categories = session.query(Category).order_by(Category.id).all()
+            return [(c.id, c.name) for c in all_categories]
 
-        if not all_categories:
-            await query.edit_message_text(
-                "❌ No categories found. Please create a category first.",
-                reply_markup=create_admin_category_menu_keyboard()
-            )
-            return ConversationHandler.END
+    categories_data = await asyncio.to_thread(_sync)
 
-        # Pagination settings
-        items_per_page = 5
-        total_pages = (len(all_categories) + items_per_page - 1) // items_per_page
-        start_idx = page * items_per_page
-        end_idx = start_idx + items_per_page
-        categories = all_categories[start_idx:end_idx]
-
-        # Build category selection keyboard
-        keyboard = []
-        for category in categories:
-            keyboard.append([
-                InlineKeyboardButton(
-                    f"📁 {category.name}",
-                    callback_data=f"edit_cat_{category.id}"
-                )
-            ])
-
-        # Add pagination buttons if needed
-        if total_pages > 1:
-            pagination_row = []
-            if page > 0:
-                pagination_row.append(InlineKeyboardButton("◀️ Previous", callback_data=f"admin_edit_category_page_{page-1}"))
-            pagination_row.append(InlineKeyboardButton(f"Page {page+1}/{total_pages}", callback_data="noop"))
-            if page < total_pages - 1:
-                pagination_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"admin_edit_category_page_{page+1}"))
-            keyboard.append(pagination_row)
-
-        # Add back button
-        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="admin_manage_categories")])
-
+    if not categories_data:
         await query.edit_message_text(
-            "✏️ Edit Category\n\nSelect a category to edit:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            "❌ No categories found. Please create a category first.",
+            reply_markup=create_admin_category_menu_keyboard()
         )
-        return EDIT_CATEGORY_SELECT
+        return ConversationHandler.END
+
+    # Pagination settings
+    items_per_page = 5
+    total_pages = (len(categories_data) + items_per_page - 1) // items_per_page
+    start_idx = page * items_per_page
+    end_idx = start_idx + items_per_page
+    page_categories = categories_data[start_idx:end_idx]
+
+    # Build category selection keyboard
+    keyboard = []
+    for cat_id, name in page_categories:
+        keyboard.append([
+            InlineKeyboardButton(
+                f"📁 {name}",
+                callback_data=f"edit_cat_{cat_id}"
+            )
+        ])
+
+    # Add pagination buttons if needed
+    if total_pages > 1:
+        pagination_row = []
+        if page > 0:
+            pagination_row.append(InlineKeyboardButton("◀️ Previous", callback_data=f"admin_edit_category_page_{page-1}"))
+        pagination_row.append(InlineKeyboardButton(f"Page {page+1}/{total_pages}", callback_data="noop"))
+        if page < total_pages - 1:
+            pagination_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"admin_edit_category_page_{page+1}"))
+        keyboard.append(pagination_row)
+
+    # Add back button
+    keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="admin_manage_categories")])
+
+    await query.edit_message_text(
+        "✏️ Edit Category\n\nSelect a category to edit:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return EDIT_CATEGORY_SELECT
 
 
 async def edit_category_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -235,7 +258,6 @@ async def edit_category_select(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # Handle back button
     if query.data == "admin_manage_categories":
-        from utils import create_admin_category_menu_keyboard
         await query.edit_message_text(
             "📁 Category Management",
             reply_markup=create_admin_category_menu_keyboard()
@@ -250,33 +272,40 @@ async def edit_category_select(update: Update, context: ContextTypes.DEFAULT_TYP
     # Extract category ID from callback data
     category_id = int(query.data.split("_")[2])
 
-    with get_db_session() as session:
-        category = session.query(Category).filter_by(id=category_id).first()
+    def _sync():
+        with get_db_session() as session:
+            category = session.query(Category).filter_by(id=category_id).first()
+            if not category:
+                return None
+            return category.name, category.description
 
-        if not category:
-            await query.edit_message_text(
-                "❌ Category not found.",
-                reply_markup=create_admin_category_menu_keyboard()
-            )
-            return ConversationHandler.END
+    result = await asyncio.to_thread(_sync)
 
-        context.user_data['edit_category_id'] = category_id
-
-        # Show fields to edit
-        keyboard = [
-            [InlineKeyboardButton("📦 Name", callback_data="editcat_name")],
-            [InlineKeyboardButton("📝 Description", callback_data="editcat_desc")],
-            [InlineKeyboardButton("🗑 Delete Category", callback_data="editcat_delete")],
-            [InlineKeyboardButton("🔙 Cancel", callback_data="cancel_edit_cat")]
-        ]
-
+    if result is None:
         await query.edit_message_text(
-            f"Editing Category: {category.name}\n"
-            f"Description: {category.description or 'No description'}\n\n"
-            f"What would you like to do?",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            "❌ Category not found.",
+            reply_markup=create_admin_category_menu_keyboard()
         )
-        return EDIT_CATEGORY_FIELD
+        return ConversationHandler.END
+
+    context.user_data['edit_category_id'] = category_id
+    cat_name, cat_desc = result
+
+    # Show fields to edit
+    keyboard = [
+        [InlineKeyboardButton("📦 Name", callback_data="editcat_name")],
+        [InlineKeyboardButton("📝 Description", callback_data="editcat_desc")],
+        [InlineKeyboardButton("🗑 Delete Category", callback_data="editcat_delete")],
+        [InlineKeyboardButton("🔙 Cancel", callback_data="cancel_edit_cat")]
+    ]
+
+    await query.edit_message_text(
+        f"Editing Category: {cat_name}\n"
+        f"Description: {cat_desc or 'No description'}\n\n"
+        f"What would you like to do?",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return EDIT_CATEGORY_FIELD
 
 
 async def edit_category_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -285,7 +314,6 @@ async def edit_category_field(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer()
 
     if query.data == "cancel_edit_cat":
-        from utils import create_admin_category_menu_keyboard
         await query.edit_message_text(
             "❌ Category edit cancelled.",
             reply_markup=create_admin_category_menu_keyboard()
@@ -293,38 +321,44 @@ async def edit_category_field(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data.clear()
         return ConversationHandler.END
 
+    category_id = context.user_data['edit_category_id']
+
     if query.data == "editcat_delete":
-        # Delete category only - products and subcategories remain (can be reassigned)
-        with get_db_session() as session:
-            from database import Cart
-            category = session.query(Category).filter_by(id=context.user_data['edit_category_id']).first()
-            category_name = category.name
+        def _sync():
+            # Delete category only - products and subcategories remain (can be reassigned)
+            with get_db_session() as session:
+                from database import Cart
+                category = session.query(Category).filter_by(id=category_id).first()
+                cat_name = category.name
 
-            # Count affected items
-            products_count = session.query(Product).filter_by(category_id=category.id).count()
-            subcats_count = session.query(Subcategory).filter_by(category_id=category.id).count()
+                # Count affected items
+                products_count = session.query(Product).filter_by(category_id=category.id).count()
+                subcats_count = session.query(Subcategory).filter_by(category_id=category.id).count()
 
-            # Delete cart items and unlink products from category
-            products = session.query(Product).filter_by(category_id=category.id).all()
-            for product in products:
-                session.query(Cart).filter_by(product_id=product.id).delete()
-                product.category_id = None
+                # Delete cart items and unlink products from category
+                products = session.query(Product).filter_by(category_id=category.id).all()
+                for product in products:
+                    session.query(Cart).filter_by(product_id=product.id).delete()
+                    product.category_id = None
 
-            # Unlink subcategories from category
-            subcategories = session.query(Subcategory).filter_by(category_id=category.id).all()
-            for subcat in subcategories:
-                subcat.category_id = None
+                # Unlink subcategories from category
+                subcategories = session.query(Subcategory).filter_by(category_id=category.id).all()
+                for subcat in subcategories:
+                    subcat.category_id = None
 
-            # Delete the category
-            session.delete(category)
-            session.commit()
-            from utils import create_admin_category_menu_keyboard
-            await query.edit_message_text(
-                f"✅ Category '{category_name}' deleted successfully!\n\n"
-                f"Note: {products_count} product(s) and {subcats_count} subcategory(ies) "
-                f"remain and can be reassigned to another category.",
-                reply_markup=create_admin_category_menu_keyboard()
-            )
+                # Delete the category
+                session.delete(category)
+                session.commit()
+                return cat_name, products_count, subcats_count
+
+        cat_name, products_count, subcats_count = await asyncio.to_thread(_sync)
+
+        await query.edit_message_text(
+            f"✅ Category '{cat_name}' deleted successfully!\n\n"
+            f"Note: {products_count} product(s) and {subcats_count} subcategory(ies) "
+            f"remain and can be reassigned to another category.",
+            reply_markup=create_admin_category_menu_keyboard()
+        )
 
         context.user_data.clear()
         return ConversationHandler.END
@@ -333,28 +367,36 @@ async def edit_category_field(update: Update, context: ContextTypes.DEFAULT_TYPE
     field = context.user_data['edit_category_field']
 
     # Get current category data to show old value
-    with get_db_session() as session:
-        category = session.query(Category).filter_by(id=context.user_data['edit_category_id']).first()
+    def _sync():
+        with get_db_session() as session:
+            category = session.query(Category).filter_by(id=category_id).first()
 
-        if not category:
-            await query.edit_message_text(
-                "❌ Category not found.",
-                reply_markup=create_admin_category_menu_keyboard()
-            )
-            context.user_data.clear()
-            return ConversationHandler.END
+            if not category:
+                return "not_found"
 
-        if field == 'name':
-            prompt = f"📦 Current name: {category.name}\n\nEnter new category name:"
-        elif field == 'desc':
-            prompt = f"📝 Current description:\n{category.description or 'No description'}\n\nEnter new category description (or type 'skip' to remove):"
-        else:
-            await query.edit_message_text(
-                "❌ Unknown field.",
-                reply_markup=create_admin_category_menu_keyboard()
-            )
-            context.user_data.clear()
-            return ConversationHandler.END
+            if field == 'name':
+                return f"📦 Current name: {category.name}\n\nEnter new category name:"
+            elif field == 'desc':
+                return f"📝 Current description:\n{category.description or 'No description'}\n\nEnter new category description (or type 'skip' to remove):"
+            else:
+                return "unknown_field"
+
+    prompt = await asyncio.to_thread(_sync)
+
+    if prompt == "not_found":
+        await query.edit_message_text(
+            "❌ Category not found.",
+            reply_markup=create_admin_category_menu_keyboard()
+        )
+        context.user_data.clear()
+        return ConversationHandler.END
+    if prompt == "unknown_field":
+        await query.edit_message_text(
+            "❌ Unknown field.",
+            reply_markup=create_admin_category_menu_keyboard()
+        )
+        context.user_data.clear()
+        return ConversationHandler.END
 
     cancel_keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel_edit_cat")]]
     await query.edit_message_text(
@@ -367,28 +409,32 @@ async def edit_category_field(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def edit_category_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle new value input for edited category field."""
     field = context.user_data['edit_category_field']
+    category_id = context.user_data['edit_category_id']
     new_value = update.message.text
 
-    with get_db_session() as session:
-        category = session.query(Category).filter_by(id=context.user_data['edit_category_id']).first()
+    def _sync():
+        with get_db_session() as session:
+            category = session.query(Category).filter_by(id=category_id).first()
 
-        if field == 'name':
-            category.name = new_value
-        elif field == 'desc':
-            category.description = "" if new_value.lower() == 'skip' else new_value
+            if field == 'name':
+                category.name = new_value
+            elif field == 'desc':
+                category.description = "" if new_value.lower() == 'skip' else new_value
 
-        session.commit()
+            session.commit()
 
-        keyboard = [
-            [InlineKeyboardButton("✏️ Edit Another Category", callback_data="admin_edit_category")],
-            [InlineKeyboardButton("🔙 Back to Category Menu", callback_data="admin_manage_categories")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+    await asyncio.to_thread(_sync)
 
-        await update.message.reply_text(
-            f"✅ Category {field} updated successfully!",
-            reply_markup=reply_markup
-        )
+    keyboard = [
+        [InlineKeyboardButton("✏️ Edit Another Category", callback_data="admin_edit_category")],
+        [InlineKeyboardButton("🔙 Back to Category Menu", callback_data="admin_manage_categories")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        f"✅ Category {field} updated successfully!",
+        reply_markup=reply_markup
+    )
 
     context.user_data.clear()
     return ConversationHandler.END
@@ -413,56 +459,62 @@ async def edit_subcategory_start(update: Update, context: ContextTypes.DEFAULT_T
     if "_page_" in query.data:
         page = int(query.data.split("_page_")[1])
 
-    with get_db_session() as session:
-        # Get all subcategories with their parent categories
-        all_subcategories = session.query(Subcategory).order_by(Subcategory.id).all()
+    def _sync():
+        with get_db_session() as session:
+            # Get all subcategories with their parent categories
+            all_subcategories = session.query(Subcategory).order_by(Subcategory.id).all()
 
-        if not all_subcategories:
-            from utils import create_admin_category_menu_keyboard
-            await query.edit_message_text(
-                "❌ No subcategories found. Please create a subcategory first.",
-                reply_markup=create_admin_category_menu_keyboard()
-            )
-            return ConversationHandler.END
+            rows = []
+            for subcategory in all_subcategories:
+                category = session.query(Category).filter_by(id=subcategory.category_id).first() if subcategory.category_id else None
+                category_label = category.name if category else "No Category"
+                rows.append((subcategory.id, subcategory.name, category_label))
+            return rows
 
-        # Pagination settings
-        items_per_page = 5
-        total_pages = (len(all_subcategories) + items_per_page - 1) // items_per_page
-        start_idx = page * items_per_page
-        end_idx = start_idx + items_per_page
-        subcategories = all_subcategories[start_idx:end_idx]
+    subcategories_data = await asyncio.to_thread(_sync)
 
-        # Build subcategory selection keyboard
-        keyboard = []
-        for subcategory in subcategories:
-            category = session.query(Category).filter_by(id=subcategory.category_id).first() if subcategory.category_id else None
-            category_label = category.name if category else "No Category"
-            keyboard.append([
-                InlineKeyboardButton(
-                    f"📂 {subcategory.name} (in {category_label})",
-                    callback_data=f"edit_subcat_{subcategory.id}"
-                )
-            ])
-
-        # Add pagination buttons if needed
-        if total_pages > 1:
-            pagination_row = []
-            if page > 0:
-                pagination_row.append(InlineKeyboardButton("◀️ Previous", callback_data=f"admin_edit_subcategory_page_{page-1}"))
-            pagination_row.append(InlineKeyboardButton(f"Page {page+1}/{total_pages}", callback_data="noop"))
-            if page < total_pages - 1:
-                pagination_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"admin_edit_subcategory_page_{page+1}"))
-            keyboard.append(pagination_row)
-
-        # Add back button
-        from utils import create_admin_category_menu_keyboard
-        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="admin_manage_categories")])
-
+    if not subcategories_data:
         await query.edit_message_text(
-            "✏️ Edit Subcategory\n\nSelect a subcategory to edit:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            "❌ No subcategories found. Please create a subcategory first.",
+            reply_markup=create_admin_category_menu_keyboard()
         )
-        return EDIT_SUBCATEGORY_SELECT
+        return ConversationHandler.END
+
+    # Pagination settings
+    items_per_page = 5
+    total_pages = (len(subcategories_data) + items_per_page - 1) // items_per_page
+    start_idx = page * items_per_page
+    end_idx = start_idx + items_per_page
+    page_subcategories = subcategories_data[start_idx:end_idx]
+
+    # Build subcategory selection keyboard
+    keyboard = []
+    for sub_id, name, category_label in page_subcategories:
+        keyboard.append([
+            InlineKeyboardButton(
+                f"📂 {name} (in {category_label})",
+                callback_data=f"edit_subcat_{sub_id}"
+            )
+        ])
+
+    # Add pagination buttons if needed
+    if total_pages > 1:
+        pagination_row = []
+        if page > 0:
+            pagination_row.append(InlineKeyboardButton("◀️ Previous", callback_data=f"admin_edit_subcategory_page_{page-1}"))
+        pagination_row.append(InlineKeyboardButton(f"Page {page+1}/{total_pages}", callback_data="noop"))
+        if page < total_pages - 1:
+            pagination_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"admin_edit_subcategory_page_{page+1}"))
+        keyboard.append(pagination_row)
+
+    # Add back button
+    keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="admin_manage_categories")])
+
+    await query.edit_message_text(
+        "✏️ Edit Subcategory\n\nSelect a subcategory to edit:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return EDIT_SUBCATEGORY_SELECT
 
 
 async def edit_subcategory_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -472,7 +524,6 @@ async def edit_subcategory_select(update: Update, context: ContextTypes.DEFAULT_
 
     # Handle back button
     if query.data == "admin_manage_categories":
-        from utils import create_admin_category_menu_keyboard
         await query.edit_message_text(
             "📁 Category Management",
             reply_markup=create_admin_category_menu_keyboard()
@@ -487,36 +538,44 @@ async def edit_subcategory_select(update: Update, context: ContextTypes.DEFAULT_
     # Extract subcategory ID from callback data
     subcategory_id = int(query.data.split("_")[2])
 
-    with get_db_session() as session:
-        subcategory = session.query(Subcategory).filter_by(id=subcategory_id).first()
+    def _sync():
+        with get_db_session() as session:
+            subcategory = session.query(Subcategory).filter_by(id=subcategory_id).first()
 
-        if not subcategory:
-            from utils import create_admin_category_menu_keyboard
-            await query.edit_message_text(
-                "❌ Subcategory not found.",
-                reply_markup=create_admin_category_menu_keyboard()
-            )
-            return ConversationHandler.END
+            if not subcategory:
+                return None
 
-        category = session.query(Category).filter_by(id=subcategory.category_id).first() if subcategory.category_id else None
-        category_name = category.name if category else "No Category"
-        context.user_data['edit_subcategory_id'] = subcategory_id
+            category = session.query(Category).filter_by(id=subcategory.category_id).first() if subcategory.category_id else None
+            category_name = category.name if category else "No Category"
+            return subcategory.name, category_name
 
-        # Show fields to edit
-        keyboard = [
-            [InlineKeyboardButton("📦 Name", callback_data="editsubcat_name")],
-            [InlineKeyboardButton("📁 Change Parent Category", callback_data="editsubcat_category")],
-            [InlineKeyboardButton("🗑 Delete Subcategory", callback_data="editsubcat_delete")],
-            [InlineKeyboardButton("🔙 Cancel", callback_data="cancel_edit_subcat")]
-        ]
+    result = await asyncio.to_thread(_sync)
 
+    if result is None:
         await query.edit_message_text(
-            f"Editing Subcategory: {subcategory.name}\n"
-            f"Parent Category: {category_name}\n\n"
-            f"What would you like to do?",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            "❌ Subcategory not found.",
+            reply_markup=create_admin_category_menu_keyboard()
         )
-        return EDIT_SUBCATEGORY_FIELD
+        return ConversationHandler.END
+
+    subcat_name, category_name = result
+    context.user_data['edit_subcategory_id'] = subcategory_id
+
+    # Show fields to edit
+    keyboard = [
+        [InlineKeyboardButton("📦 Name", callback_data="editsubcat_name")],
+        [InlineKeyboardButton("📁 Change Parent Category", callback_data="editsubcat_category")],
+        [InlineKeyboardButton("🗑 Delete Subcategory", callback_data="editsubcat_delete")],
+        [InlineKeyboardButton("🔙 Cancel", callback_data="cancel_edit_subcat")]
+    ]
+
+    await query.edit_message_text(
+        f"Editing Subcategory: {subcat_name}\n"
+        f"Parent Category: {category_name}\n\n"
+        f"What would you like to do?",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return EDIT_SUBCATEGORY_FIELD
 
 
 async def edit_subcategory_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -525,7 +584,6 @@ async def edit_subcategory_field(update: Update, context: ContextTypes.DEFAULT_T
     await query.answer()
 
     if query.data == "cancel_edit_subcat":
-        from utils import create_admin_category_menu_keyboard
         await query.edit_message_text(
             "❌ Subcategory edit cancelled.",
             reply_markup=create_admin_category_menu_keyboard()
@@ -533,87 +591,101 @@ async def edit_subcategory_field(update: Update, context: ContextTypes.DEFAULT_T
         context.user_data.clear()
         return ConversationHandler.END
 
+    subcategory_id = context.user_data['edit_subcategory_id']
+
     if query.data == "editsubcat_delete":
-        # Delete subcategory only - products remain (can be reassigned)
-        with get_db_session() as session:
-            from database import Cart
-            subcategory = session.query(Subcategory).filter_by(id=context.user_data['edit_subcategory_id']).first()
-            subcategory_name = subcategory.name
+        def _sync():
+            # Delete subcategory only - products remain (can be reassigned)
+            with get_db_session() as session:
+                from database import Cart
+                subcategory = session.query(Subcategory).filter_by(id=subcategory_id).first()
+                subcategory_name = subcategory.name
 
-            # Get products in this subcategory
-            products = session.query(Product).filter_by(subcategory_id=subcategory.id).all()
-            products_count = len(products)
+                # Get products in this subcategory
+                products = session.query(Product).filter_by(subcategory_id=subcategory.id).all()
+                products_count = len(products)
 
-            # Delete cart items and unlink products from subcategory
-            for product in products:
-                session.query(Cart).filter_by(product_id=product.id).delete()
-                product.subcategory_id = None
+                # Delete cart items and unlink products from subcategory
+                for product in products:
+                    session.query(Cart).filter_by(product_id=product.id).delete()
+                    product.subcategory_id = None
 
-            session.delete(subcategory)
-            session.commit()
-            from utils import create_admin_category_menu_keyboard
-            await query.edit_message_text(
-                f"✅ Subcategory '{subcategory_name}' deleted successfully!\n\n"
-                f"Note: {products_count} product(s) remain and can be reassigned to another subcategory.",
-                reply_markup=create_admin_category_menu_keyboard()
-            )
+                session.delete(subcategory)
+                session.commit()
+                return subcategory_name, products_count
+
+        subcategory_name, products_count = await asyncio.to_thread(_sync)
+
+        await query.edit_message_text(
+            f"✅ Subcategory '{subcategory_name}' deleted successfully!\n\n"
+            f"Note: {products_count} product(s) remain and can be reassigned to another subcategory.",
+            reply_markup=create_admin_category_menu_keyboard()
+        )
 
         context.user_data.clear()
         return ConversationHandler.END
 
     if query.data == "editsubcat_category":
-        # Show category selection
-        with get_db_session() as session:
-            categories = session.query(Category).all()
+        def _sync():
+            with get_db_session() as session:
+                categories = session.query(Category).all()
+                return [(c.id, c.name) for c in categories]
 
-            if not categories:
-                from utils import create_admin_category_menu_keyboard
-                await query.edit_message_text(
-                    "❌ No categories available.",
-                    reply_markup=create_admin_category_menu_keyboard()
-                )
-                context.user_data.clear()
-                return ConversationHandler.END
+        categories = await asyncio.to_thread(_sync)
 
-            keyboard = []
-            for cat in categories:
-                keyboard.append([InlineKeyboardButton(cat.name, callback_data=f"newcat_{cat.id}")])
-            keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel_edit_subcat")])
-
-            context.user_data['edit_subcategory_field'] = 'category'
-
+        if not categories:
             await query.edit_message_text(
-                "📁 Select new parent category:",
-                reply_markup=InlineKeyboardMarkup(keyboard)
+                "❌ No categories available.",
+                reply_markup=create_admin_category_menu_keyboard()
             )
-            return EDIT_SUBCATEGORY_VALUE
+            context.user_data.clear()
+            return ConversationHandler.END
+
+        keyboard = []
+        for cat_id, name in categories:
+            keyboard.append([InlineKeyboardButton(name, callback_data=f"newcat_{cat_id}")])
+        keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel_edit_subcat")])
+
+        context.user_data['edit_subcategory_field'] = 'category'
+
+        await query.edit_message_text(
+            "📁 Select new parent category:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return EDIT_SUBCATEGORY_VALUE
 
     context.user_data['edit_subcategory_field'] = query.data.split("_")[1]
     field = context.user_data['edit_subcategory_field']
 
     # Get current subcategory data to show old value
-    with get_db_session() as session:
-        subcategory = session.query(Subcategory).filter_by(id=context.user_data['edit_subcategory_id']).first()
+    def _sync():
+        with get_db_session() as session:
+            subcategory = session.query(Subcategory).filter_by(id=subcategory_id).first()
 
-        if not subcategory:
-            from utils import create_admin_category_menu_keyboard
-            await query.edit_message_text(
-                "❌ Subcategory not found.",
-                reply_markup=create_admin_category_menu_keyboard()
-            )
-            context.user_data.clear()
-            return ConversationHandler.END
+            if not subcategory:
+                return "not_found"
 
-        if field == 'name':
-            prompt = f"📦 Current name: {subcategory.name}\n\nEnter new subcategory name:"
-        else:
-            from utils import create_admin_category_menu_keyboard
-            await query.edit_message_text(
-                "❌ Unknown field.",
-                reply_markup=create_admin_category_menu_keyboard()
-            )
-            context.user_data.clear()
-            return ConversationHandler.END
+            if field == 'name':
+                return f"📦 Current name: {subcategory.name}\n\nEnter new subcategory name:"
+            else:
+                return "unknown_field"
+
+    prompt = await asyncio.to_thread(_sync)
+
+    if prompt == "not_found":
+        await query.edit_message_text(
+            "❌ Subcategory not found.",
+            reply_markup=create_admin_category_menu_keyboard()
+        )
+        context.user_data.clear()
+        return ConversationHandler.END
+    if prompt == "unknown_field":
+        await query.edit_message_text(
+            "❌ Unknown field.",
+            reply_markup=create_admin_category_menu_keyboard()
+        )
+        context.user_data.clear()
+        return ConversationHandler.END
 
     cancel_keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel_edit_subcat")]]
     await query.edit_message_text(
@@ -626,49 +698,66 @@ async def edit_subcategory_field(update: Update, context: ContextTypes.DEFAULT_T
 async def edit_subcategory_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle new value input for edited subcategory field."""
     field = context.user_data['edit_subcategory_field']
+    subcategory_id = context.user_data['edit_subcategory_id']
 
-    with get_db_session() as session:
-        subcategory = session.query(Subcategory).filter_by(id=context.user_data['edit_subcategory_id']).first()
+    if field == 'category':
+        # Handle category change via callback
+        query = update.callback_query
+        await query.answer()
 
-        if field == 'name':
-            new_value = update.message.text
-            subcategory.name = new_value
-        elif field == 'category':
-            # Handle category change via callback
-            query = update.callback_query
-            await query.answer()
+        if query.data == "cancel_edit_subcat":
+            await query.edit_message_text(
+                "❌ Subcategory edit cancelled.",
+                reply_markup=create_admin_category_menu_keyboard()
+            )
+            context.user_data.clear()
+            return ConversationHandler.END
 
-            if query.data == "cancel_edit_subcat":
-                from utils import create_admin_category_menu_keyboard
-                await query.edit_message_text(
-                    "❌ Subcategory edit cancelled.",
-                    reply_markup=create_admin_category_menu_keyboard()
-                )
-                context.user_data.clear()
-                return ConversationHandler.END
+        new_category_id = int(query.data.split("_")[1])
 
-            new_category_id = int(query.data.split("_")[1])
-            subcategory.category_id = new_category_id
+        def _sync():
+            with get_db_session() as session:
+                subcategory = session.query(Subcategory).filter_by(id=subcategory_id).first()
+                subcategory.category_id = new_category_id
+                session.commit()
 
-        session.commit()
+        await asyncio.to_thread(_sync)
 
-        from utils import create_admin_category_menu_keyboard
         keyboard = [
             [InlineKeyboardButton("✏️ Edit Another Subcategory", callback_data="admin_edit_subcategory")],
             [InlineKeyboardButton("🔙 Back to Category Menu", callback_data="admin_manage_categories")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        if field == 'category':
-            await query.edit_message_text(
-                "✅ Subcategory parent category updated successfully!",
-                reply_markup=reply_markup
-            )
-        else:
-            await update.message.reply_text(
-                f"✅ Subcategory {field} updated successfully!",
-                reply_markup=reply_markup
-            )
+        await query.edit_message_text(
+            "✅ Subcategory parent category updated successfully!",
+            reply_markup=reply_markup
+        )
+
+        context.user_data.clear()
+        return ConversationHandler.END
+
+    # field == 'name'
+    new_value = update.message.text
+
+    def _sync():
+        with get_db_session() as session:
+            subcategory = session.query(Subcategory).filter_by(id=subcategory_id).first()
+            subcategory.name = new_value
+            session.commit()
+
+    await asyncio.to_thread(_sync)
+
+    keyboard = [
+        [InlineKeyboardButton("✏️ Edit Another Subcategory", callback_data="admin_edit_subcategory")],
+        [InlineKeyboardButton("🔙 Back to Category Menu", callback_data="admin_manage_categories")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        f"✅ Subcategory {field} updated successfully!",
+        reply_markup=reply_markup
+    )
 
     context.user_data.clear()
     return ConversationHandler.END
