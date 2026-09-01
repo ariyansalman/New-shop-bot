@@ -6,6 +6,43 @@ nor `SQLAlchemy` is installed). Findings are ordered by severity.
 
 ---
 
+## 0. Follow-up audit (2026-09-01)
+
+The fixes below were already in place from the previous pass (verified by
+re-reading the code, not assumed). Two new issues turned up on a fresh read:
+
+### 0.1 CryptoBot webhook and the 30s poller could double-credit the same payment
+`webhook_server.py :: process_invoice_paid`, `handlers/payment_handlers.py ::
+check_pending_payments`
+
+Both paths query for transactions with `status == PENDING` and then set them
+to `COMPLETED` and credit the wallet, but neither locked the row first. The
+webhook (Flask thread) and the poller (asyncio job, every 30s) run in the same
+process, so if a payment confirmation arrived from both channels close
+together, both could read `PENDING` before either committed and credit the
+wallet twice for one payment.
+
+**Fixed:** both paths now re-fetch the specific transaction with
+`with_for_update()` and re-check `status == PENDING` immediately before
+crediting; PostgreSQL re-evaluates the `WHERE` clause after the lock is
+granted, so whichever path loses the race sees the row already `COMPLETED`
+and skips it. (No-op on SQLite, same caveat as the existing purchase-flow
+locks — see "SQLite + `with_for_update()`" below.)
+
+### 0.2 Dispute resolution answered the same callback query twice
+`handlers/dispute_handlers.py :: admin_resolve_dispute_callback`
+
+`query.answer()` fired unconditionally after the admin check, and then
+`query.answer("⚠️ This dispute is already resolved.", ...)` fired again when
+the dispute was already resolved — the exact "answer twice" bug described in
+1.2 below, just not caught in that pass. Clicking resolve on an
+already-resolved dispute raised instead of showing the intended alert.
+
+**Fixed:** the already-resolved case now uses `edit_message_text`, matching
+the idiom the other admin handlers already use for this.
+
+---
+
 ## 1. Security
 
 ### 1.1 Dispute admin panel had no authorization at all — **critical**

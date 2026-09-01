@@ -315,7 +315,11 @@ async def admin_resolve_dispute_callback(update: Update, context: ContextTypes.D
             return
 
         if dispute.status == DisputeStatus.RESOLVED:
-            await query.answer("⚠️ This dispute is already resolved.", show_alert=True)
+            # query.answer() already fired unconditionally above; a second
+            # call for the same callback query raises, so use
+            # edit_message_text here instead (same fix as the other admin
+            # handlers that hit this).
+            await query.edit_message_text("⚠️ This dispute is already resolved.")
             return
 
         order = session.query(Order).filter_by(id=dispute.order_id).first()

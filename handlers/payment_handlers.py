@@ -451,23 +451,33 @@ async def check_pending_payments(context: ContextTypes.DEFAULT_TYPE):
                 )
 
                 if is_paid:
-                    # Update transaction status
-                    transaction.status = TransactionStatus.COMPLETED
-                    transaction.completed_at = datetime.utcnow()
+                    # Re-fetch under a row lock and re-check status: the
+                    # CryptoBot webhook runs in this same process and could be
+                    # crediting this exact transaction right now. Without the
+                    # lock, both paths could read status=PENDING here and
+                    # credit the wallet twice for one payment.
+                    locked_txn = session.query(Transaction).filter_by(
+                        id=transaction.id, status=TransactionStatus.PENDING
+                    ).with_for_update().first()
+                    if not locked_txn:
+                        continue  # already handled by the webhook
+
+                    locked_txn.status = TransactionStatus.COMPLETED
+                    locked_txn.completed_at = datetime.utcnow()
 
                     # Update user wallet balance
-                    user = session.query(User).filter_by(id=transaction.user_id).first()
+                    user = session.query(User).filter_by(id=locked_txn.user_id).first()
                     if user:
-                        user.wallet_balance += transaction.amount
+                        user.wallet_balance += locked_txn.amount
                         session.commit()
 
                         # Store notification data
                         payment_notifications.append({
                             'user_telegram_id': user.telegram_id,
-                            'amount': transaction.amount,
+                            'amount': locked_txn.amount,
                             'new_balance': user.wallet_balance,
-                            'transaction_id': transaction.id,
-                            'payment_method': transaction.payment_method.value
+                            'transaction_id': locked_txn.id,
+                            'payment_method': locked_txn.payment_method.value
                         })
 
         return payment_notifications

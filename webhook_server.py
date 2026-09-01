@@ -87,20 +87,32 @@ def process_invoice_paid(invoice_data: dict):
             # SQLAlchemy persists Enum members by NAME ("CRYPTO_WALLET"), so
             # filtering on the string 'crypto_wallet' matched nothing and every
             # webhook used to be silently dropped.
-            transactions = session.query(Transaction).filter(
+            candidates = session.query(Transaction.id, Transaction.crypto_address).filter(
                 Transaction.payment_method == PaymentMethod.CRYPTO_WALLET,
                 Transaction.status == TransactionStatus.PENDING
             ).all()
 
-            transaction = None
-            for txn in transactions:
-                if txn.crypto_address and txn.crypto_address.startswith(f"{invoice_id}|"):
-                    transaction = txn
+            transaction_id = None
+            for txn_id, crypto_address in candidates:
+                if crypto_address and crypto_address.startswith(f"{invoice_id}|"):
+                    transaction_id = txn_id
                     break
 
-            if not transaction:
+            if transaction_id is None:
                 # Normal when the 30s poller got there first.
                 logger.info("No pending transaction for invoice %s", invoice_id)
+                return
+
+            # Re-fetch under a row lock and re-check status: the 30s poller
+            # (check_pending_payments) runs in this same process and could be
+            # crediting this exact transaction right now. Without the lock,
+            # both paths could read status=PENDING and credit the wallet twice.
+            transaction = session.query(Transaction).filter_by(
+                id=transaction_id, status=TransactionStatus.PENDING
+            ).with_for_update().first()
+
+            if not transaction:
+                logger.info("Transaction %s for invoice %s already processed", transaction_id, invoice_id)
                 return
 
             # Do not credit more than the invoice was actually issued for.
