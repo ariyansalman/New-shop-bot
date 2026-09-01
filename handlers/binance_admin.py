@@ -127,9 +127,12 @@ def _settings_keyboard():
     toggle = ("🔴 Disable Binance Pay" if bp.binance_pay_available()
               else "🟢 Enable Binance Pay")
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🧪 Test Configuration", callback_data="binadmin_test")],
+        [InlineKeyboardButton("🧪 Test Config", callback_data="binadmin_test"),
+         InlineKeyboardButton("📊 Monitoring", callback_data="binadmin_mon_review_0")],
+        # The switch keeps a row to itself: it is the one button here that
+        # changes what customers can do, and it should not be a half-width
+        # neighbour of something harmless.
         [InlineKeyboardButton(toggle, callback_data="binadmin_toggle")],
-        [InlineKeyboardButton("📊 Payment Monitoring", callback_data="binadmin_mon_review_0")],
         [InlineKeyboardButton("🔙 Back", callback_data="admin_menu")],
     ])
 

@@ -138,84 +138,104 @@ def create_support_keyboard(support_username, channel_username):
     return InlineKeyboardMarkup(keyboard)
 
 
+def two_column_rows(buttons):
+    """Lay a flat list of buttons out two per row.
+
+    The single place the admin panel's grid is defined, so every menu keeps
+    the same shape. A trailing odd button ends up alone on the last row,
+    which Telegram renders full width - that reads as intentional, so the
+    menus below are ordered to put a standalone item there rather than
+    leaving a lopsided pair in the middle.
+
+    Deliberately NOT used for lists of records (products, users, orders,
+    transactions). Those carry names and prices of unpredictable length;
+    at half width they truncate, and two records side by side make a
+    mis-tap on a phone both easy and consequential.
+    """
+    return [list(buttons[i:i + 2]) for i in range(0, len(buttons), 2)]
+
+
+def _menu(action_buttons, back_label, back_target):
+    """An admin menu: actions in a two-column grid, navigation below it.
+
+    Back stays full width on its own row. It is the one button pressed by
+    reflex rather than by reading, so it should never sit half width beside
+    an action that changes something.
+    """
+    keyboard = two_column_rows(action_buttons)
+    keyboard.append([InlineKeyboardButton(back_label, callback_data=back_target)])
+    return InlineKeyboardMarkup(keyboard)
+
+
 def create_admin_main_menu_keyboard():
     """Create admin panel main menu keyboard."""
-    keyboard = [
-        [InlineKeyboardButton("📦 Product Management", callback_data="admin_products")],
-        [InlineKeyboardButton("👥 User Management", callback_data="admin_users")],
-        [InlineKeyboardButton("🛍 Order Management", callback_data="admin_orders")],
-        [InlineKeyboardButton("⚙️ Store Settings", callback_data="admin_settings")],
-        [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast")],
-        [InlineKeyboardButton("🟡 Binance Pay", callback_data="binadmin_menu")],
-        [InlineKeyboardButton("📜 Admin Action Log", callback_data="admin_action_log")],
-        [InlineKeyboardButton("🔙 Exit Admin", callback_data="main_menu")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+    return _menu([
+        # Catalogue and people, then money and outreach, then configuration.
+        InlineKeyboardButton("📦 Products", callback_data="admin_products"),
+        InlineKeyboardButton("👥 Users", callback_data="admin_users"),
+        InlineKeyboardButton("🛍 Orders", callback_data="admin_orders"),
+        InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"),
+        InlineKeyboardButton("🟡 Binance Pay", callback_data="binadmin_menu"),
+        InlineKeyboardButton("⚙️ Settings", callback_data="admin_settings"),
+        # Odd one out, so it lands on its own full-width row.
+        InlineKeyboardButton("📜 Admin Action Log", callback_data="admin_action_log"),
+    ], "🔙 Exit Admin", "main_menu")
 
 
 def create_admin_product_menu_keyboard():
     """Create admin product management menu keyboard."""
-    keyboard = [
-        [InlineKeyboardButton("➕ Create Product", callback_data="admin_create_product")],
-        [InlineKeyboardButton("✏️ Edit Product", callback_data="admin_edit_product")],
-        [InlineKeyboardButton("🔄 Restock Keys", callback_data="admin_restock_keys")],
-        [InlineKeyboardButton("📁 Manage Categories", callback_data="admin_manage_categories")],
-        [InlineKeyboardButton("🔙 Back", callback_data="admin_menu")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+    return _menu([
+        InlineKeyboardButton("➕ Add Product", callback_data="admin_create_product"),
+        InlineKeyboardButton("✏️ Edit Product", callback_data="admin_edit_product"),
+        InlineKeyboardButton("🔄 Restock Keys", callback_data="admin_restock_keys"),
+        InlineKeyboardButton("📁 Categories", callback_data="admin_manage_categories"),
+    ], "🔙 Back", "admin_menu")
 
 
 def create_admin_category_menu_keyboard():
     """Create admin category management menu keyboard."""
-    keyboard = [
-        [InlineKeyboardButton("➕ Create Category", callback_data="admin_create_category")],
-        [InlineKeyboardButton("➕ Create Subcategory", callback_data="admin_create_subcategory")],
-        [InlineKeyboardButton("✏️ Edit Category", callback_data="admin_edit_category")],
-        [InlineKeyboardButton("✏️ Edit Subcategory", callback_data="admin_edit_subcategory")],
-        [InlineKeyboardButton("📋 View Categories", callback_data="admin_view_categories")],
-        [InlineKeyboardButton("🔙 Back", callback_data="admin_products")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+    return _menu([
+        # Row of adds, then the matching row of edits, so category and
+        # subcategory line up in the same column throughout.
+        InlineKeyboardButton("➕ Add Category", callback_data="admin_create_category"),
+        InlineKeyboardButton("➕ Add Subcategory", callback_data="admin_create_subcategory"),
+        InlineKeyboardButton("✏️ Edit Category", callback_data="admin_edit_category"),
+        InlineKeyboardButton("✏️ Edit Subcategory", callback_data="admin_edit_subcategory"),
+        InlineKeyboardButton("📋 View Categories", callback_data="admin_view_categories"),
+    ], "🔙 Back", "admin_products")
 
 
 def create_admin_user_menu_keyboard():
     """Create admin user management menu keyboard."""
-    keyboard = [
-        [InlineKeyboardButton("👁 View Users", callback_data="admin_view_users")],
-        [InlineKeyboardButton("🔙 Back", callback_data="admin_menu")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+    return _menu([
+        InlineKeyboardButton("👁 View Users", callback_data="admin_view_users"),
+    ], "🔙 Back", "admin_menu")
 
 
 def create_admin_order_menu_keyboard():
     """Create admin order management menu keyboard."""
-    keyboard = [
-        [InlineKeyboardButton("📋 View All Orders", callback_data="admin_view_orders")],
-        [InlineKeyboardButton("🚨 View Disputes", callback_data="admin_view_disputes")],
-        [InlineKeyboardButton("✅ Manual Confirmation", callback_data="admin_confirm_order")],
-        [InlineKeyboardButton("❌ Cancel Order", callback_data="admin_cancel_order")],
-        [InlineKeyboardButton("🔙 Back", callback_data="admin_menu")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+    return _menu([
+        # Read-only pair first, then the pair that changes an order.
+        InlineKeyboardButton("📋 All Orders", callback_data="admin_view_orders"),
+        InlineKeyboardButton("🚨 Disputes", callback_data="admin_view_disputes"),
+        InlineKeyboardButton("✅ Confirm Order", callback_data="admin_confirm_order"),
+        InlineKeyboardButton("❌ Cancel Order", callback_data="admin_cancel_order"),
+    ], "🔙 Back", "admin_menu")
 
 
 def create_admin_settings_menu_keyboard():
     """Create admin store settings menu keyboard."""
-    keyboard = [
-        [InlineKeyboardButton("💬 Welcome Message", callback_data="admin_welcome_msg")],
-        [InlineKeyboardButton("🖼 Store Logo", callback_data="admin_store_logo")],
-        [InlineKeyboardButton("📞 Support Username", callback_data="admin_support_username")],
-        [InlineKeyboardButton("📢 Channel Username", callback_data="admin_channel_username")],
-        [InlineKeyboardButton("🔙 Back", callback_data="admin_menu")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+    return _menu([
+        InlineKeyboardButton("💬 Welcome Message", callback_data="admin_welcome_msg"),
+        InlineKeyboardButton("🖼 Store Logo", callback_data="admin_store_logo"),
+        InlineKeyboardButton("📞 Support Username", callback_data="admin_support_username"),
+        InlineKeyboardButton("📢 Channel Username", callback_data="admin_channel_username"),
+    ], "🔙 Back", "admin_menu")
 
 
 def create_admin_broadcast_menu_keyboard():
     """Create admin broadcast menu keyboard."""
-    keyboard = [
-        [InlineKeyboardButton("💬 Text Only Broadcast", callback_data="admin_broadcast_text")],
-        [InlineKeyboardButton("🖼 Image + Text Broadcast", callback_data="admin_broadcast_image")],
-        [InlineKeyboardButton("🔙 Back", callback_data="admin_menu")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+    return _menu([
+        InlineKeyboardButton("💬 Text Only", callback_data="admin_broadcast_text"),
+        InlineKeyboardButton("🖼 Image + Text", callback_data="admin_broadcast_image"),
+    ], "🔙 Back", "admin_menu")
