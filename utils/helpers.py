@@ -1,5 +1,6 @@
 """Helper utility functions for the Telegram bot."""
 
+import logging
 import threading
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -9,6 +10,8 @@ from telegram.ext import ContextTypes
 from config.settings import settings
 from database import get_db_session, User
 from .money import to_money
+
+logger = logging.getLogger(__name__)
 
 # In-memory cache for ban status (telegram_id: (is_banned, timestamp))
 _ban_cache = {}
@@ -145,8 +148,8 @@ async def notify_admin(context: ContextTypes.DEFAULT_TYPE, message: str):
             chat_id=settings.ADMIN_TELEGRAM_ID,
             text=message
         )
-    except Exception as e:
-        print(f"Error notifying admin: {e}")
+    except Exception:
+        logger.exception("Error notifying admin")
 
 
 def build_availability_text(products_by_category) -> str:

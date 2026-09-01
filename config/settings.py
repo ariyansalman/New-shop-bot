@@ -1,9 +1,12 @@
 """Configuration settings loader from environment variables."""
 
+import logging
 import os
 from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 # Load environment variables from a local .env file.
 # On Railway the variables come from the service environment instead, and there
@@ -76,7 +79,7 @@ class Settings:
         try:
             ADMIN_IDS.add(int(_raw_id))
         except ValueError:
-            print(f"[WARN] Ignoring non-numeric entry in ADMIN_TELEGRAM_IDS: {_raw_id!r}")
+            logger.warning("Ignoring non-numeric entry in ADMIN_TELEGRAM_IDS: %r", _raw_id)
     del _raw_id
     # Used to build the CryptoBot "return to bot" button (without the leading @).
     BOT_USERNAME = os.getenv('BOT_USERNAME', '').lstrip('@')
@@ -139,23 +142,23 @@ def validate_settings():
         raise ValueError("ADMIN_TELEGRAM_ID is required and must be a number")
 
     if len(settings.ADMIN_IDS) > 1:
-        print(f"[OK] {len(settings.ADMIN_IDS)} admins configured "
-              f"(ADMIN_TELEGRAM_ID + ADMIN_TELEGRAM_IDS)")
+        logger.info("%d admins configured (ADMIN_TELEGRAM_ID + ADMIN_TELEGRAM_IDS)",
+                    len(settings.ADMIN_IDS))
 
     if not settings.DATABASE_URL:
         raise ValueError("DATABASE_URL is required")
 
     if settings.DATABASE_URL.startswith('sqlite'):
-        print("[WARN] Using SQLite. On Railway the filesystem is ephemeral, so the "
-              "database is wiped on every redeploy - set DATABASE_URL to your "
-              "Supabase connection string.")
+        logger.warning("Using SQLite. On Railway the filesystem is ephemeral, so the "
+                        "database is wiped on every redeploy - set DATABASE_URL to your "
+                        "Supabase connection string.")
 
     # Non-fatal, but the corresponding payment method will not work.
     if not settings.CRYPTO_BOT_API_KEY:
-        print("[WARN] CRYPTO_BOT_API_KEY is not set - crypto top-ups are disabled")
+        logger.warning("CRYPTO_BOT_API_KEY is not set - crypto top-ups are disabled")
     if not settings.TELEGRAM_PROVIDER_TOKEN:
-        print("[WARN] TELEGRAM_PROVIDER_TOKEN is not set - card top-ups are disabled")
+        logger.warning("TELEGRAM_PROVIDER_TOKEN is not set - card top-ups are disabled")
     if not settings.BOT_USERNAME:
-        print("[WARN] BOT_USERNAME is not set - CryptoBot 'return to bot' button disabled")
+        logger.warning("BOT_USERNAME is not set - CryptoBot 'return to bot' button disabled")
 
-    print("[OK] Configuration validated successfully")
+    logger.info("Configuration validated successfully")

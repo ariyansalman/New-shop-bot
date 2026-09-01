@@ -1,6 +1,7 @@
 """Admin conversation handlers for multi-step workflows."""
 
 import asyncio
+import logging
 import os
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -10,6 +11,8 @@ from database import (
 )
 from utils import is_admin, format_price, money_or_none, log_admin_action, create_admin_product_menu_keyboard, create_admin_category_menu_keyboard
 from config.settings import settings as app_settings
+
+logger = logging.getLogger(__name__)
 
 # Conversation states for product creation
 PRODUCT_NAME, PRODUCT_DESC, PRODUCT_PRICE, PRODUCT_TYPE, PRODUCT_CATEGORY, PRODUCT_SUBCATEGORY, PRODUCT_IMAGE, PRODUCT_DOWNLOAD_LINK, PRODUCT_KEYS = range(9)
@@ -1626,8 +1629,8 @@ async def edit_image_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if product.image_path and os.path.exists(product.image_path):
                     try:
                         os.remove(product.image_path)
-                    except Exception as e:
-                        print(f"Error deleting old image: {e}")
+                    except Exception:
+                        logger.exception("Error deleting old image")
 
                 product.image_path = None
                 session.commit()
@@ -1667,8 +1670,8 @@ async def edit_image_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if product.image_path and os.path.exists(product.image_path):
                 try:
                     os.remove(product.image_path)
-                except Exception as e:
-                    print(f"Error deleting old image: {e}")
+                except Exception:
+                    logger.exception("Error deleting old image")
 
             product.image_path = image_path
             session.commit()

@@ -1,5 +1,6 @@
 """Payment and wallet management handlers."""
 
+import logging
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
 from telegram.ext import ContextTypes, ConversationHandler
@@ -15,6 +16,8 @@ from utils import (
 )
 from config.settings import settings as app_settings
 from services.crypto_bot import CryptoBotService
+
+logger = logging.getLogger(__name__)
 
 # Conversation states for top-up
 AMOUNT, METHOD = range(2)
@@ -182,7 +185,7 @@ You cannot create a new order until this one is completed or expired."""
         # Extract pay_url from payment_address
         if "|" in payment_address:
             invoice_id, pay_url = payment_address.split("|", 1)
-            print(f"Invoice created: ID={invoice_id}, URL={pay_url}")
+            logger.info("Invoice created: ID=%s, URL=%s", invoice_id, pay_url)
         else:
             # Fallback for unexpected format
             pay_url = payment_address
@@ -866,8 +869,7 @@ async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 'details': order_details,
             }
     except Exception:
-        import logging
-        logging.getLogger(__name__).exception("Purchase failed for user %s", telegram_id)
+        logger.exception("Purchase failed for user %s", telegram_id)
         await query.edit_message_text(
             "❌ Something went wrong while processing your purchase. "
             "Your wallet has not been charged. Please try again or contact support."
@@ -930,10 +932,8 @@ async def cancel_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def broadcast_availability_to_all_users(context: ContextTypes.DEFAULT_TYPE):
     """Scheduled job to broadcast availability to all users every 12 hours (non-blocking with rate limiting)."""
     import asyncio
-    import logging
     from utils import build_availability_text
 
-    logger = logging.getLogger(__name__)
     logger.info("Starting availability broadcast to all users...")
 
     def _get_users_and_availability_sync():

@@ -87,7 +87,7 @@ def init_db():
     mainly as a dev convenience for a brand-new empty database.
     """
     Base.metadata.create_all(engine)
-    print("[OK] Database tables created successfully")
+    logger.info("Database tables created successfully")
 
 
 def check_connection() -> bool:
@@ -97,14 +97,14 @@ def check_connection() -> bool:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         backend = "Supabase/PostgreSQL" if IS_POSTGRES else "SQLite"
-        print(f"[OK] Database connection verified ({backend})")
+        logger.info("Database connection verified (%s)", backend)
         return True
-    except Exception as e:
-        print(f"[ERROR] Cannot connect to the database: {e}")
+    except Exception:
+        logger.exception("Cannot connect to the database")
         if IS_POSTGRES:
-            print("        Check DATABASE_URL. For Supabase, use the "
-                  "'Session pooler' string from Project Settings -> Database, "
-                  "and make sure the password is URL-encoded.")
+            logger.error("Check DATABASE_URL. For Supabase, use the "
+                          "'Session pooler' string from Project Settings -> Database, "
+                          "and make sure the password is URL-encoded.")
         return False
 
 

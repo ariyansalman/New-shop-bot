@@ -1,5 +1,6 @@
 """Dispute handling for orders."""
 
+import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 from database import get_db_session, User, Order, Dispute, DisputeStatus
@@ -8,6 +9,8 @@ from utils import (
     is_admin, check_user_banned, log_admin_action
 )
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 # Conversation states
 DISPUTE_REASON = 0
@@ -356,8 +359,8 @@ async def admin_resolve_dispute_callback(update: Update, context: ContextTypes.D
                  f"Thank you for your patience. If you have any further questions, please contact support.",
             reply_markup=user_reply_markup
         )
-    except Exception as e:
-        print(f"Error notifying user about dispute resolution: {e}")
+    except Exception:
+        logger.exception("Error notifying user about dispute resolution")
 
     # Confirm to admin
     keyboard = [[InlineKeyboardButton("🔙 Back to Disputes", callback_data="admin_view_disputes")]]
