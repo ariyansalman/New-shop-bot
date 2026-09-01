@@ -1,0 +1,20 @@
+# --- Telegram bot ---------------------------------------------------------
+# The code imports `telegram.ext`, i.e. python-telegram-bot.
+# The [job-queue] extra is REQUIRED: bot.py uses application.job_queue.
+python-telegram-bot[job-queue]==21.6
+
+# --- Database -------------------------------------------------------------
+SQLAlchemy==2.0.35
+# PostgreSQL driver for Supabase. psycopg2-binary ships prebuilt wheels, so
+# Railway does not need to compile anything.
+psycopg2-binary==2.9.9
+
+# --- HTTP / config --------------------------------------------------------
+requests==2.32.3
+python-dotenv==1.0.1
+
+# --- CryptoBot webhook receiver ------------------------------------------
+Flask==3.0.3
+# Production WSGI server. Flask's built-in server is single-threaded and
+# explicitly not for production; waitress is pure-Python so it runs anywhere.
+waitress==3.0.0

@@ -1,0 +1,14 @@
+.env
+*.db
+*.sqlite3
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+assets/logos/*
+assets/products/*
+uploads/*
+!assets/logos/.gitkeep
+!assets/products/.gitkeep
+!uploads/__init__.py
+.DS_Store
