@@ -25,8 +25,18 @@ from database.models import Base  # noqa: E402
 # access to the values within the .ini file in use.
 config = context.config
 
-# Interpret the config file for Python logging.
-if config.config_file_name is not None:
+# Interpret the config file for Python logging - but only when Alembic is
+# being driven from the command line.
+#
+# fileConfig() defaults to disable_existing_loggers=True, so it silences
+# every logger created before it runs. That is harmless for `alembic
+# upgrade head` in its own process, but database.db._stamp_alembic_head()
+# calls Alembic in-process during app startup: without this guard, the
+# stamp of a freshly created database killed the application's logging for
+# the rest of its lifetime (the boot got as far as "Database tables
+# created successfully" and then went silent - which is exactly how CI's
+# Docker boot smoke test caught it).
+if config.config_file_name is not None and config.attributes.get("configure_logger", True):
     fileConfig(config.config_file_name)
 
 # Autogenerate support: compare Base.metadata against the live schema.

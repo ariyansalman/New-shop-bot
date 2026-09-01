@@ -101,6 +101,10 @@ def _stamp_alembic_head():
     # env.py reads the URL from settings, but set it explicitly so a stamp
     # can never land on a different database than the one just created.
     cfg.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+    # Keep Alembic's logging config out of this process: env.py's
+    # fileConfig() would disable every logger the app already created (see
+    # the comment there). Only the CLI should own logging configuration.
+    cfg.attributes["configure_logger"] = False
     command.stamp(cfg, "head")
     logger.info("New database stamped at Alembic head")
 
