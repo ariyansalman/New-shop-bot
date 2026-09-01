@@ -1,5 +1,15 @@
-"""Product creation and edit conversation flows."""
+"""Product creation and edit conversation flows.
 
+Same asyncio.to_thread refactor as the other handler modules: every
+"with get_db_session()" block's query/mutation work runs in a nested
+_sync() closure off the event loop, returning only plain data, with the
+final Telegram API call left on the event loop. This is a multi-step
+admin-only conversation (product creation, product editing) rather than a
+hot path any regular user hits, but a blocking query here still freezes
+every other user's handler for as long as it runs.
+"""
+
+import asyncio
 import logging
 import os
 from datetime import datetime
@@ -124,28 +134,31 @@ async def product_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
     product_type = ProductType.KEY if query.data == "type_key" else ProductType.FILE
     context.user_data['product_type'] = product_type
 
-    # Get categories and show selection
-    with get_db_session() as session:
-        categories = session.query(Category).all()
+    def _sync():
+        with get_db_session() as session:
+            categories = session.query(Category).all()
+            return [(c.id, c.name) for c in categories]
 
-        if not categories:
-            await query.edit_message_text(
-                "❌ No categories available. Please create a category first.",
-                reply_markup=create_admin_product_menu_keyboard()
-            )
-            context.user_data.clear()
-            return ConversationHandler.END
+    categories = await asyncio.to_thread(_sync)
 
-        keyboard = []
-        for cat in categories:
-            keyboard.append([InlineKeyboardButton(cat.name, callback_data=f"cat_{cat.id}")])
-        keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel_product")])
-
+    if not categories:
         await query.edit_message_text(
-            "📁 Select a category for this product:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            "❌ No categories available. Please create a category first.",
+            reply_markup=create_admin_product_menu_keyboard()
         )
-        return PRODUCT_CATEGORY
+        context.user_data.clear()
+        return ConversationHandler.END
+
+    keyboard = []
+    for cat_id, name in categories:
+        keyboard.append([InlineKeyboardButton(name, callback_data=f"cat_{cat_id}")])
+    keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel_product")])
+
+    await query.edit_message_text(
+        "📁 Select a category for this product:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return PRODUCT_CATEGORY
 
 
 async def product_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -164,33 +177,36 @@ async def product_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
     category_id = int(query.data.split("_")[1])
     context.user_data['product_category'] = category_id
 
-    # Check if category has subcategories
-    with get_db_session() as session:
-        subcategories = session.query(Subcategory).filter_by(category_id=category_id).all()
+    def _sync():
+        with get_db_session() as session:
+            subcategories = session.query(Subcategory).filter_by(category_id=category_id).all()
+            return [(s.id, s.name) for s in subcategories]
 
-        if subcategories:
-            keyboard = [[InlineKeyboardButton("⏭ Skip (No Subcategory)", callback_data="subcat_skip")]]
-            for subcat in subcategories:
-                keyboard.append([InlineKeyboardButton(subcat.name, callback_data=f"subcat_{subcat.id}")])
-            keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel_product")])
+    subcategories = await asyncio.to_thread(_sync)
 
-            await query.edit_message_text(
-                "📂 Select a subcategory (optional):",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-            return PRODUCT_SUBCATEGORY
-        else:
-            # No subcategories, skip to image
-            context.user_data['product_subcategory'] = None
+    if subcategories:
+        keyboard = [[InlineKeyboardButton("⏭ Skip (No Subcategory)", callback_data="subcat_skip")]]
+        for sub_id, name in subcategories:
+            keyboard.append([InlineKeyboardButton(name, callback_data=f"subcat_{sub_id}")])
+        keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel_product")])
 
-            # Create cancel button
-            cancel_keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel_product")]]
+        await query.edit_message_text(
+            "📂 Select a subcategory (optional):",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return PRODUCT_SUBCATEGORY
+    else:
+        # No subcategories, skip to image
+        context.user_data['product_subcategory'] = None
 
-            await query.edit_message_text(
-                "🖼 Send a product image (optional) or type 'skip' to skip:",
-                reply_markup=InlineKeyboardMarkup(cancel_keyboard)
-            )
-            return PRODUCT_IMAGE
+        # Create cancel button
+        cancel_keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel_product")]]
+
+        await query.edit_message_text(
+            "🖼 Send a product image (optional) or type 'skip' to skip:",
+            reply_markup=InlineKeyboardMarkup(cancel_keyboard)
+        )
+        return PRODUCT_IMAGE
 
 
 async def product_subcategory(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -393,54 +409,67 @@ async def create_product_final(update, context):
     """Create the product in the database."""
     from database import ProductKey
 
-    with get_db_session() as session:
-        # Get keys if provided, de-duplicated (a pasted list often repeats keys,
-        # which previously inflated stock_count and could deliver the same key twice)
-        raw_keys = context.user_data.get('product_keys', []) or []
-        seen = set()
-        product_keys = []
-        for k in raw_keys:
-            if k not in seen:
-                seen.add(k)
-                product_keys.append(k)
-        duplicates_dropped = len(raw_keys) - len(product_keys)
-        stock_count = len(product_keys)
+    # Pull everything needed out of context.user_data up front, so the
+    # thread closure below only ever touches plain local values, never
+    # context.user_data itself.
+    raw_keys = context.user_data.get('product_keys', []) or []
+    product_type_value = context.user_data['product_type']
+    new_product_name = context.user_data['product_name']
+    product_desc_value = context.user_data['product_desc']
+    product_price_value = context.user_data['product_price']
+    product_category_id = context.user_data['product_category']
+    product_subcategory_id = context.user_data.get('product_subcategory')
+    product_image_path = context.user_data.get('product_image')
+    product_download_link_value = context.user_data.get('product_download_link')
 
-        # For file products, set stock to 999999 (unlimited)
-        if context.user_data['product_type'] == ProductType.FILE:
-            stock_count = 999999
+    def _sync():
+        with get_db_session() as session:
+            # Get keys if provided, de-duplicated (a pasted list often repeats keys,
+            # which previously inflated stock_count and could deliver the same key twice)
+            seen = set()
+            product_keys = []
+            for k in raw_keys:
+                if k not in seen:
+                    seen.add(k)
+                    product_keys.append(k)
+            duplicates_dropped = len(raw_keys) - len(product_keys)
+            stock_count = len(product_keys)
 
-        product = Product(
-            name=context.user_data['product_name'],
-            description=context.user_data['product_desc'],
-            price=context.user_data['product_price'],
-            product_type=context.user_data['product_type'],
-            category_id=context.user_data['product_category'],
-            subcategory_id=context.user_data.get('product_subcategory'),
-            image_path=context.user_data.get('product_image'),
-            download_link=context.user_data.get('product_download_link'),
-            stock_count=stock_count,
-            is_active=True
-        )
-        session.add(product)
-        session.commit()
-        session.refresh(product)
+            # For file products, set stock to 999999 (unlimited)
+            if product_type_value == ProductType.FILE:
+                stock_count = 999999
 
-        # Add keys to product_keys table if provided
-        keys_added = 0
-        if product_keys and context.user_data['product_type'] == ProductType.KEY:
-            for key_value in product_keys:
-                product_key = ProductKey(
-                    product_id=product.id,
-                    key_value=key_value,
-                    is_sold=False
-                )
-                session.add(product_key)
-                keys_added += 1
+            product = Product(
+                name=new_product_name,
+                description=product_desc_value,
+                price=product_price_value,
+                product_type=product_type_value,
+                category_id=product_category_id,
+                subcategory_id=product_subcategory_id,
+                image_path=product_image_path,
+                download_link=product_download_link_value,
+                stock_count=stock_count,
+                is_active=True
+            )
+            session.add(product)
             session.commit()
+            session.refresh(product)
 
-        # Build success message
-        message = f"""✅ Product Created Successfully!
+            # Add keys to product_keys table if provided
+            keys_added = 0
+            if product_keys and product_type_value == ProductType.KEY:
+                for key_value in product_keys:
+                    product_key = ProductKey(
+                        product_id=product.id,
+                        key_value=key_value,
+                        is_sold=False
+                    )
+                    session.add(product_key)
+                    keys_added += 1
+                session.commit()
+
+            # Build success message
+            message = f"""✅ Product Created Successfully!
 
 📦 Name: {product.name}
 💰 Price: {format_price(product.price)}
@@ -449,21 +478,25 @@ async def create_product_final(update, context):
 
 Product ID: #{product.id}"""
 
-        if keys_added > 0:
-            message += f"\n🔑 Keys Added: {keys_added}"
-            if duplicates_dropped:
-                message += f"\n⏭ Duplicates dropped: {duplicates_dropped}"
-        elif context.user_data['product_type'] == ProductType.KEY:
-            message += "\n\n⚠️ No keys added. Use the Restock Keys option to add inventory."
+            if keys_added > 0:
+                message += f"\n🔑 Keys Added: {keys_added}"
+                if duplicates_dropped:
+                    message += f"\n⏭ Duplicates dropped: {duplicates_dropped}"
+            elif product_type_value == ProductType.KEY:
+                message += "\n\n⚠️ No keys added. Use the Restock Keys option to add inventory."
 
-        # Create keyboard with options
-        keyboard = [
-            [InlineKeyboardButton("➕ Create Another Product", callback_data="admin_create_product")],
-            [InlineKeyboardButton("🔙 Back to Product Menu", callback_data="admin_products")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+            return message
 
-        await update.message.reply_text(message, reply_markup=reply_markup)
+    message = await asyncio.to_thread(_sync)
+
+    # Create keyboard with options
+    keyboard = [
+        [InlineKeyboardButton("➕ Create Another Product", callback_data="admin_create_product")],
+        [InlineKeyboardButton("🔙 Back to Product Menu", callback_data="admin_products")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(message, reply_markup=reply_markup)
 
     context.user_data.clear()
 
@@ -509,53 +542,56 @@ async def edit_product_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if "_page_" in query.data:
         page = int(query.data.split("_page_")[1])
 
-    with get_db_session() as session:
-        # Get all products
-        all_products = session.query(Product).order_by(Product.id).all()
+    def _sync():
+        with get_db_session() as session:
+            all_products = session.query(Product).order_by(Product.id).all()
+            return [(p.id, p.name, p.price, p.is_active) for p in all_products]
 
-        if not all_products:
-            await query.edit_message_text(
-                "❌ No products found. Please create a product first.",
-                reply_markup=create_admin_product_menu_keyboard()
-            )
-            return ConversationHandler.END
+    products_data = await asyncio.to_thread(_sync)
 
-        # Pagination settings
-        items_per_page = 5
-        total_pages = (len(all_products) + items_per_page - 1) // items_per_page
-        start_idx = page * items_per_page
-        end_idx = start_idx + items_per_page
-        products = all_products[start_idx:end_idx]
-
-        # Build product selection keyboard
-        keyboard = []
-        for product in products:
-            status_icon = "✅" if product.is_active else "❌"
-            keyboard.append([
-                InlineKeyboardButton(
-                    f"{status_icon} {product.name} (${product.price})",
-                    callback_data=f"edit_prod_{product.id}"
-                )
-            ])
-
-        # Add pagination buttons if needed
-        if total_pages > 1:
-            pagination_row = []
-            if page > 0:
-                pagination_row.append(InlineKeyboardButton("◀️ Previous", callback_data=f"admin_edit_product_page_{page-1}"))
-            pagination_row.append(InlineKeyboardButton(f"Page {page+1}/{total_pages}", callback_data="noop"))
-            if page < total_pages - 1:
-                pagination_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"admin_edit_product_page_{page+1}"))
-            keyboard.append(pagination_row)
-
-        # Add cancel button
-        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="admin_products")])
-
+    if not products_data:
         await query.edit_message_text(
-            "✏️ Edit Product\n\nSelect a product to edit:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            "❌ No products found. Please create a product first.",
+            reply_markup=create_admin_product_menu_keyboard()
         )
-        return EDIT_SELECT_PRODUCT
+        return ConversationHandler.END
+
+    # Pagination settings
+    items_per_page = 5
+    total_pages = (len(products_data) + items_per_page - 1) // items_per_page
+    start_idx = page * items_per_page
+    end_idx = start_idx + items_per_page
+    page_products = products_data[start_idx:end_idx]
+
+    # Build product selection keyboard
+    keyboard = []
+    for product_id, prod_name, price, is_active in page_products:
+        status_icon = "✅" if is_active else "❌"
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{status_icon} {prod_name} (${price})",
+                callback_data=f"edit_prod_{product_id}"
+            )
+        ])
+
+    # Add pagination buttons if needed
+    if total_pages > 1:
+        pagination_row = []
+        if page > 0:
+            pagination_row.append(InlineKeyboardButton("◀️ Previous", callback_data=f"admin_edit_product_page_{page-1}"))
+        pagination_row.append(InlineKeyboardButton(f"Page {page+1}/{total_pages}", callback_data="noop"))
+        if page < total_pages - 1:
+            pagination_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"admin_edit_product_page_{page+1}"))
+        keyboard.append(pagination_row)
+
+    # Add cancel button
+    keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="admin_products")])
+
+    await query.edit_message_text(
+        "✏️ Edit Product\n\nSelect a product to edit:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return EDIT_SELECT_PRODUCT
 
 
 async def edit_select_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -570,60 +606,69 @@ async def edit_select_product(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Extract product ID from callback data
     product_id = int(query.data.split("_")[2])
 
-    with get_db_session() as session:
-        product = session.query(Product).filter_by(id=product_id).first()
+    def _sync():
+        with get_db_session() as session:
+            product = session.query(Product).filter_by(id=product_id).first()
 
-        if not product:
-            await query.edit_message_text(
-                "❌ Product not found.",
-                reply_markup=create_admin_product_menu_keyboard()
-            )
-            return ConversationHandler.END
+            if not product:
+                return None
 
-        context.user_data['edit_product_id'] = product_id
+            # Get current category and subcategory names
+            category_name = "None"
+            subcategory_name = "None"
+            if product.category_id:
+                category = session.query(Category).filter_by(id=product.category_id).first()
+                category_name = category.name if category else "None"
+            if product.subcategory_id:
+                subcategory = session.query(Subcategory).filter_by(id=product.subcategory_id).first()
+                subcategory_name = subcategory.name if subcategory else "None"
 
-        # Get current category and subcategory names
-        category_name = "None"
-        subcategory_name = "None"
-        if product.category_id:
-            category = session.query(Category).filter_by(id=product.category_id).first()
-            category_name = category.name if category else "None"
-        if product.subcategory_id:
-            subcategory = session.query(Subcategory).filter_by(id=product.subcategory_id).first()
-            subcategory_name = subcategory.name if subcategory else "None"
+            # Get available keys count
+            from database import ProductKey
+            available_keys = session.query(ProductKey).filter_by(product_id=product.id, is_sold=False).count()
 
-        # Get available keys count
-        from database import ProductKey
-        available_keys = session.query(ProductKey).filter_by(product_id=product.id, is_sold=False).count()
+            return product.name, product.price, category_name, subcategory_name, product.is_active, available_keys
 
-        # Show fields to edit
-        keyboard = [
-            [InlineKeyboardButton("📦 Name", callback_data="edit_name")],
-            [InlineKeyboardButton("📝 Description", callback_data="edit_desc")],
-            [InlineKeyboardButton("💰 Price", callback_data="edit_price")],
-            [InlineKeyboardButton("🖼 Image", callback_data="edit_image")],
-            [InlineKeyboardButton("📁 Category", callback_data="edit_category")],
-            [InlineKeyboardButton("📂 Subcategory", callback_data="edit_subcategory")],
-            [InlineKeyboardButton("✅ Activate", callback_data="edit_activate")],
-            [InlineKeyboardButton("❌ Deactivate", callback_data="edit_deactivate")],
-            [InlineKeyboardButton(f"🗑 Clear Keys ({available_keys})", callback_data="edit_clear_keys")],
-            [InlineKeyboardButton("🗑 Delete Product", callback_data="edit_delete")],
-            [InlineKeyboardButton("🔙 Cancel", callback_data="cancel_edit")]
-        ]
+    result = await asyncio.to_thread(_sync)
 
-        current_status = "Active" if product.is_active else "Inactive"
-
+    if result is None:
         await query.edit_message_text(
-            f"Editing Product: {product.name}\n"
-            f"Current Price: {format_price(product.price)}\n"
-            f"Category: {category_name}\n"
-            f"Subcategory: {subcategory_name}\n"
-            f"Status: {current_status}\n"
-            f"Available Keys: {available_keys}\n\n"
-            f"What would you like to edit?",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            "❌ Product not found.",
+            reply_markup=create_admin_product_menu_keyboard()
         )
-        return EDIT_SELECT_FIELD
+        return ConversationHandler.END
+
+    context.user_data['edit_product_id'] = product_id
+    prod_name, price, category_name, subcategory_name, is_active, available_keys = result
+
+    # Show fields to edit
+    keyboard = [
+        [InlineKeyboardButton("📦 Name", callback_data="edit_name")],
+        [InlineKeyboardButton("📝 Description", callback_data="edit_desc")],
+        [InlineKeyboardButton("💰 Price", callback_data="edit_price")],
+        [InlineKeyboardButton("🖼 Image", callback_data="edit_image")],
+        [InlineKeyboardButton("📁 Category", callback_data="edit_category")],
+        [InlineKeyboardButton("📂 Subcategory", callback_data="edit_subcategory")],
+        [InlineKeyboardButton("✅ Activate", callback_data="edit_activate")],
+        [InlineKeyboardButton("❌ Deactivate", callback_data="edit_deactivate")],
+        [InlineKeyboardButton(f"🗑 Clear Keys ({available_keys})", callback_data="edit_clear_keys")],
+        [InlineKeyboardButton("🗑 Delete Product", callback_data="edit_delete")],
+        [InlineKeyboardButton("🔙 Cancel", callback_data="cancel_edit")]
+    ]
+
+    current_status = "Active" if is_active else "Inactive"
+
+    await query.edit_message_text(
+        f"Editing Product: {prod_name}\n"
+        f"Current Price: {format_price(price)}\n"
+        f"Category: {category_name}\n"
+        f"Subcategory: {subcategory_name}\n"
+        f"Status: {current_status}\n"
+        f"Available Keys: {available_keys}\n\n"
+        f"What would you like to edit?",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return EDIT_SELECT_FIELD
 
 
 async def edit_select_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -639,189 +684,222 @@ async def edit_select_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         return ConversationHandler.END
 
+    product_id = context.user_data['edit_product_id']
+
     if query.data == "edit_activate":
-        # Activate product
-        with get_db_session() as session:
-            product = session.query(Product).filter_by(id=context.user_data['edit_product_id']).first()
-            product.is_active = True
-            session.commit()
-            await query.edit_message_text(
-                f"✅ Product '{product.name}' activated!",
-                reply_markup=create_admin_product_menu_keyboard()
-            )
+        def _sync():
+            with get_db_session() as session:
+                product = session.query(Product).filter_by(id=product_id).first()
+                product.is_active = True
+                session.commit()
+                return product.name
+
+        prod_name = await asyncio.to_thread(_sync)
+        await query.edit_message_text(
+            f"✅ Product '{prod_name}' activated!",
+            reply_markup=create_admin_product_menu_keyboard()
+        )
         context.user_data.clear()
         return ConversationHandler.END
 
     if query.data == "edit_deactivate":
-        # Deactivate product
-        with get_db_session() as session:
-            product = session.query(Product).filter_by(id=context.user_data['edit_product_id']).first()
-            product.is_active = False
-            session.commit()
-            await query.edit_message_text(
-                f"❌ Product '{product.name}' deactivated!",
-                reply_markup=create_admin_product_menu_keyboard()
-            )
+        def _sync():
+            with get_db_session() as session:
+                product = session.query(Product).filter_by(id=product_id).first()
+                product.is_active = False
+                session.commit()
+                return product.name
+
+        prod_name = await asyncio.to_thread(_sync)
+        await query.edit_message_text(
+            f"❌ Product '{prod_name}' deactivated!",
+            reply_markup=create_admin_product_menu_keyboard()
+        )
         context.user_data.clear()
         return ConversationHandler.END
 
     if query.data == "edit_clear_keys":
-        # Clear all unsold keys for the product
-        with get_db_session() as session:
-            from database import ProductKey
-            product = session.query(Product).filter_by(id=context.user_data['edit_product_id']).first()
-            product_name = product.name
+        def _sync():
+            with get_db_session() as session:
+                from database import ProductKey
+                product = session.query(Product).filter_by(id=product_id).first()
+                prod_name = product.name
 
-            # Count and delete only unsold keys
-            unsold_keys_count = session.query(ProductKey).filter_by(
-                product_id=product.id, is_sold=False
-            ).count()
+                # Count and delete only unsold keys
+                unsold_keys_count = session.query(ProductKey).filter_by(
+                    product_id=product.id, is_sold=False
+                ).count()
 
-            if unsold_keys_count == 0:
-                await query.edit_message_text(
-                    f"ℹ️ Product '{product_name}' has no unsold keys to clear.",
-                    reply_markup=create_admin_product_menu_keyboard()
-                )
-            else:
+                if unsold_keys_count == 0:
+                    return prod_name, 0
+
                 session.query(ProductKey).filter_by(
                     product_id=product.id, is_sold=False
                 ).delete()
                 # Update stock count
                 product.stock_count = 0
                 session.commit()
-                await query.edit_message_text(
-                    f"✅ Cleared {unsold_keys_count} unsold key(s) from '{product_name}'!\n\n"
-                    f"You can now add new keys using the Restock option.",
-                    reply_markup=create_admin_product_menu_keyboard()
-                )
+                return prod_name, unsold_keys_count
+
+        prod_name, cleared_count = await asyncio.to_thread(_sync)
+
+        if cleared_count == 0:
+            await query.edit_message_text(
+                f"ℹ️ Product '{prod_name}' has no unsold keys to clear.",
+                reply_markup=create_admin_product_menu_keyboard()
+            )
+        else:
+            await query.edit_message_text(
+                f"✅ Cleared {cleared_count} unsold key(s) from '{prod_name}'!\n\n"
+                f"You can now add new keys using the Restock option.",
+                reply_markup=create_admin_product_menu_keyboard()
+            )
         context.user_data.clear()
         return ConversationHandler.END
 
     if query.data == "edit_delete":
-        # Delete product only - order items remain (preserve order history)
-        with get_db_session() as session:
-            from database import Cart, ProductKey
-            product = session.query(Product).filter_by(id=context.user_data['edit_product_id']).first()
-            product_name = product.name
+        def _sync():
+            with get_db_session() as session:
+                from database import Cart, ProductKey
+                product = session.query(Product).filter_by(id=product_id).first()
+                prod_name = product.name
 
-            # Delete associated cart items
-            session.query(Cart).filter_by(product_id=product.id).delete()
-            # Delete only unsold product keys (sold keys remain for order history)
-            session.query(ProductKey).filter_by(product_id=product.id, is_sold=False).delete()
-            # Delete the product (order items remain with orphaned product_id)
-            session.delete(product)
-            session.commit()
-            await query.edit_message_text(
-                f"✅ Product '{product_name}' deleted successfully!\n\n"
-                f"Note: Order history is preserved.",
-                reply_markup=create_admin_product_menu_keyboard()
-            )
+                # Delete associated cart items
+                session.query(Cart).filter_by(product_id=product.id).delete()
+                # Delete only unsold product keys (sold keys remain for order history)
+                session.query(ProductKey).filter_by(product_id=product.id, is_sold=False).delete()
+                # Delete the product (order items remain with orphaned product_id)
+                session.delete(product)
+                session.commit()
+                return prod_name
 
+        prod_name = await asyncio.to_thread(_sync)
+        await query.edit_message_text(
+            f"✅ Product '{prod_name}' deleted successfully!\n\n"
+            f"Note: Order history is preserved.",
+            reply_markup=create_admin_product_menu_keyboard()
+        )
         context.user_data.clear()
         return ConversationHandler.END
 
     if query.data == "edit_image":
-        # Prompt for new image
-        with get_db_session() as session:
-            product = session.query(Product).filter_by(id=context.user_data['edit_product_id']).first()
+        def _sync():
+            with get_db_session() as session:
+                product = session.query(Product).filter_by(id=product_id).first()
+                current_image_status = "Has image" if (product.image_path and os.path.exists(product.image_path)) else "No image"
+                return product.name, current_image_status
 
-            current_image_status = "Has image" if (product.image_path and os.path.exists(product.image_path)) else "No image"
+        prod_name, current_image_status = await asyncio.to_thread(_sync)
 
-            keyboard = [
-                [InlineKeyboardButton("🗑 Remove Image", callback_data="remove_product_image")],
-                [InlineKeyboardButton("❌ Cancel", callback_data="cancel_edit")]
-            ]
+        keyboard = [
+            [InlineKeyboardButton("🗑 Remove Image", callback_data="remove_product_image")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel_edit")]
+        ]
 
-            await query.edit_message_text(
-                f"🖼 Product: {product.name}\n"
-                f"Current: {current_image_status}\n\n"
-                f"Send a new product image or use the buttons below:",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-            return EDIT_IMAGE_VALUE
+        await query.edit_message_text(
+            f"🖼 Product: {prod_name}\n"
+            f"Current: {current_image_status}\n\n"
+            f"Send a new product image or use the buttons below:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return EDIT_IMAGE_VALUE
 
     if query.data == "edit_category":
-        # Show category selection
-        with get_db_session() as session:
-            categories = session.query(Category).all()
+        def _sync():
+            with get_db_session() as session:
+                categories = session.query(Category).all()
+                return [(c.id, c.name) for c in categories]
 
-            if not categories:
-                await query.edit_message_text(
-                    "❌ No categories available. Please create a category first.",
-                    reply_markup=create_admin_product_menu_keyboard()
-                )
-                context.user_data.clear()
-                return ConversationHandler.END
+        categories = await asyncio.to_thread(_sync)
 
-            keyboard = []
-            for cat in categories:
-                keyboard.append([InlineKeyboardButton(cat.name, callback_data=f"newprodcat_{cat.id}")])
-            keyboard.append([InlineKeyboardButton("🗑 Remove Category", callback_data="newprodcat_none")])
-            keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel_edit")])
-
-            context.user_data['edit_field'] = 'category'
-
+        if not categories:
             await query.edit_message_text(
-                "📁 Select new category for this product:",
-                reply_markup=InlineKeyboardMarkup(keyboard)
+                "❌ No categories available. Please create a category first.",
+                reply_markup=create_admin_product_menu_keyboard()
             )
-            return EDIT_NEW_VALUE
+            context.user_data.clear()
+            return ConversationHandler.END
+
+        keyboard = []
+        for cat_id, name in categories:
+            keyboard.append([InlineKeyboardButton(name, callback_data=f"newprodcat_{cat_id}")])
+        keyboard.append([InlineKeyboardButton("🗑 Remove Category", callback_data="newprodcat_none")])
+        keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel_edit")])
+
+        context.user_data['edit_field'] = 'category'
+
+        await query.edit_message_text(
+            "📁 Select new category for this product:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return EDIT_NEW_VALUE
 
     if query.data == "edit_subcategory":
-        # Show subcategory selection
-        with get_db_session() as session:
-            # Get product to know current category
-            product = session.query(Product).filter_by(id=context.user_data['edit_product_id']).first()
+        def _sync():
+            with get_db_session() as session:
+                # Get product to know current category
+                product = session.query(Product).filter_by(id=product_id).first()
 
-            # Get subcategories (optionally filter by product's category)
-            if product.category_id:
-                subcategories = session.query(Subcategory).filter_by(category_id=product.category_id).all()
-            else:
-                subcategories = session.query(Subcategory).all()
+                # Get subcategories (optionally filter by product's category)
+                if product.category_id:
+                    subcategories = session.query(Subcategory).filter_by(category_id=product.category_id).all()
+                else:
+                    subcategories = session.query(Subcategory).all()
 
-            keyboard = []
-            if subcategories:
-                for subcat in subcategories:
-                    keyboard.append([InlineKeyboardButton(subcat.name, callback_data=f"newprodsubcat_{subcat.id}")])
-            keyboard.append([InlineKeyboardButton("🗑 Remove Subcategory", callback_data="newprodsubcat_none")])
-            keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel_edit")])
+                return [(s.id, s.name) for s in subcategories]
 
-            context.user_data['edit_field'] = 'subcategory'
+        subcategories = await asyncio.to_thread(_sync)
 
-            await query.edit_message_text(
-                "📂 Select new subcategory for this product:",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-            return EDIT_NEW_VALUE
+        keyboard = []
+        for sub_id, name in subcategories:
+            keyboard.append([InlineKeyboardButton(name, callback_data=f"newprodsubcat_{sub_id}")])
+        keyboard.append([InlineKeyboardButton("🗑 Remove Subcategory", callback_data="newprodsubcat_none")])
+        keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel_edit")])
+
+        context.user_data['edit_field'] = 'subcategory'
+
+        await query.edit_message_text(
+            "📂 Select new subcategory for this product:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return EDIT_NEW_VALUE
 
     context.user_data['edit_field'] = query.data.split("_")[1]
     field = context.user_data['edit_field']
 
     # Get current product data to show old value
-    with get_db_session() as session:
-        product = session.query(Product).filter_by(id=context.user_data['edit_product_id']).first()
+    def _sync():
+        with get_db_session() as session:
+            product = session.query(Product).filter_by(id=product_id).first()
 
-        if not product:
-            await query.edit_message_text(
-                "❌ Product not found.",
-                reply_markup=create_admin_product_menu_keyboard()
-            )
-            context.user_data.clear()
-            return ConversationHandler.END
+            if not product:
+                return "not_found"
 
-        if field == 'name':
-            prompt = f"📦 Current name: {product.name}\n\nEnter new product name:"
-        elif field == 'desc':
-            prompt = f"📝 Current description:\n{product.description or 'No description'}\n\nEnter new product description:"
-        elif field == 'price':
-            prompt = f"💰 Current price: {format_price(product.price)}\n\nEnter new product price (USD):"
-        else:
-            await query.edit_message_text(
-                "❌ Unknown field.",
-                reply_markup=create_admin_product_menu_keyboard()
-            )
-            context.user_data.clear()
-            return ConversationHandler.END
+            if field == 'name':
+                return f"📦 Current name: {product.name}\n\nEnter new product name:"
+            elif field == 'desc':
+                return f"📝 Current description:\n{product.description or 'No description'}\n\nEnter new product description:"
+            elif field == 'price':
+                return f"💰 Current price: {format_price(product.price)}\n\nEnter new product price (USD):"
+            else:
+                return "unknown_field"
+
+    prompt = await asyncio.to_thread(_sync)
+
+    if prompt == "not_found":
+        await query.edit_message_text(
+            "❌ Product not found.",
+            reply_markup=create_admin_product_menu_keyboard()
+        )
+        context.user_data.clear()
+        return ConversationHandler.END
+    if prompt == "unknown_field":
+        await query.edit_message_text(
+            "❌ Unknown field.",
+            reply_markup=create_admin_product_menu_keyboard()
+        )
+        context.user_data.clear()
+        return ConversationHandler.END
 
     cancel_keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel_edit")]]
     await query.edit_message_text(
@@ -848,74 +926,40 @@ async def edit_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.clear()
             return ConversationHandler.END
 
-        with get_db_session() as session:
-            product = session.query(Product).filter_by(id=context.user_data['edit_product_id']).first()
+        product_id = context.user_data['edit_product_id']
+        callback_data = query.data
 
-            if field == 'category':
-                if query.data == "newprodcat_none":
-                    product.category_id = None
-                    product.subcategory_id = None  # Clear subcategory when removing category
-                else:
-                    new_category_id = int(query.data.split("_")[1])
-                    product.category_id = new_category_id
-                    # Clear subcategory if it doesn't belong to new category
-                    if product.subcategory_id:
-                        subcat = session.query(Subcategory).filter_by(id=product.subcategory_id).first()
-                        if subcat and subcat.category_id != new_category_id:
-                            product.subcategory_id = None
+        def _sync():
+            with get_db_session() as session:
+                product = session.query(Product).filter_by(id=product_id).first()
 
-            elif field == 'subcategory':
-                if query.data == "newprodsubcat_none":
-                    product.subcategory_id = None
-                else:
-                    new_subcategory_id = int(query.data.split("_")[1])
-                    product.subcategory_id = new_subcategory_id
-                    # Update category to match subcategory's parent
-                    subcat = session.query(Subcategory).filter_by(id=new_subcategory_id).first()
-                    if subcat:
-                        product.category_id = subcat.category_id
+                if field == 'category':
+                    if callback_data == "newprodcat_none":
+                        product.category_id = None
+                        product.subcategory_id = None  # Clear subcategory when removing category
+                    else:
+                        new_category_id = int(callback_data.split("_")[1])
+                        product.category_id = new_category_id
+                        # Clear subcategory if it doesn't belong to new category
+                        if product.subcategory_id:
+                            subcat = session.query(Subcategory).filter_by(id=product.subcategory_id).first()
+                            if subcat and subcat.category_id != new_category_id:
+                                product.subcategory_id = None
 
-            session.commit()
+                elif field == 'subcategory':
+                    if callback_data == "newprodsubcat_none":
+                        product.subcategory_id = None
+                    else:
+                        new_subcategory_id = int(callback_data.split("_")[1])
+                        product.subcategory_id = new_subcategory_id
+                        # Update category to match subcategory's parent
+                        subcat = session.query(Subcategory).filter_by(id=new_subcategory_id).first()
+                        if subcat:
+                            product.category_id = subcat.category_id
 
-            keyboard = [
-                [InlineKeyboardButton("✏️ Edit Another Product", callback_data="admin_edit_product")],
-                [InlineKeyboardButton("🔙 Back to Product Menu", callback_data="admin_products")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
+                session.commit()
 
-            await query.edit_message_text(
-                f"✅ Product {field} updated successfully!",
-                reply_markup=reply_markup
-            )
-
-        context.user_data.clear()
-        return ConversationHandler.END
-
-    # Handle text input (name, desc, price)
-    new_value = update.message.text
-
-    with get_db_session() as session:
-        product = session.query(Product).filter_by(id=context.user_data['edit_product_id']).first()
-
-        if field == 'name':
-            product.name = new_value
-        elif field == 'desc':
-            product.description = new_value
-        elif field == 'price':
-            new_price = money_or_none(new_value)
-            if new_price is None or new_price <= 0:
-                cancel_keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel_edit")]]
-                await update.message.reply_text(
-                    "❌ Invalid price. Please enter a valid number greater than 0:",
-                    reply_markup=InlineKeyboardMarkup(cancel_keyboard)
-                )
-                return EDIT_NEW_VALUE
-            log_admin_action(session, update.effective_user.id, "edit_product_price",
-                              target_type="product", target_id=product.id,
-                              details=f"old={product.price}, new={new_price}")
-            product.price = new_price
-
-        session.commit()
+        await asyncio.to_thread(_sync)
 
         keyboard = [
             [InlineKeyboardButton("✏️ Edit Another Product", callback_data="admin_edit_product")],
@@ -923,10 +967,59 @@ async def edit_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await update.message.reply_text(
+        await query.edit_message_text(
             f"✅ Product {field} updated successfully!",
             reply_markup=reply_markup
         )
+
+        context.user_data.clear()
+        return ConversationHandler.END
+
+    # Handle text input (name, desc, price)
+    new_value = update.message.text
+    product_id = context.user_data['edit_product_id']
+    admin_telegram_id = update.effective_user.id
+
+    def _sync():
+        with get_db_session() as session:
+            product = session.query(Product).filter_by(id=product_id).first()
+
+            if field == 'name':
+                product.name = new_value
+            elif field == 'desc':
+                product.description = new_value
+            elif field == 'price':
+                new_price = money_or_none(new_value)
+                if new_price is None or new_price <= 0:
+                    return "invalid_price"
+                log_admin_action(session, admin_telegram_id, "edit_product_price",
+                                  target_type="product", target_id=product.id,
+                                  details=f"old={product.price}, new={new_price}")
+                product.price = new_price
+
+            session.commit()
+            return "ok"
+
+    result = await asyncio.to_thread(_sync)
+
+    if result == "invalid_price":
+        cancel_keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel_edit")]]
+        await update.message.reply_text(
+            "❌ Invalid price. Please enter a valid number greater than 0:",
+            reply_markup=InlineKeyboardMarkup(cancel_keyboard)
+        )
+        return EDIT_NEW_VALUE
+
+    keyboard = [
+        [InlineKeyboardButton("✏️ Edit Another Product", callback_data="admin_edit_product")],
+        [InlineKeyboardButton("🔙 Back to Product Menu", callback_data="admin_products")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        f"✅ Product {field} updated successfully!",
+        reply_markup=reply_markup
+    )
 
     context.user_data.clear()
     return ConversationHandler.END
@@ -948,30 +1041,34 @@ async def edit_image_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return ConversationHandler.END
 
         if query.data == "remove_product_image":
-            # Remove product image
-            with get_db_session() as session:
-                product = session.query(Product).filter_by(id=context.user_data['edit_product_id']).first()
+            product_id = context.user_data['edit_product_id']
 
-                # Delete old image file if exists
-                if product.image_path and os.path.exists(product.image_path):
-                    try:
-                        os.remove(product.image_path)
-                    except Exception:
-                        logger.exception("Error deleting old image")
+            def _sync():
+                with get_db_session() as session:
+                    product = session.query(Product).filter_by(id=product_id).first()
 
-                product.image_path = None
-                session.commit()
+                    # Delete old image file if exists
+                    if product.image_path and os.path.exists(product.image_path):
+                        try:
+                            os.remove(product.image_path)
+                        except Exception:
+                            logger.exception("Error deleting old image")
 
-                keyboard = [
-                    [InlineKeyboardButton("✏️ Edit Another Product", callback_data="admin_edit_product")],
-                    [InlineKeyboardButton("🔙 Back to Product Menu", callback_data="admin_products")]
-                ]
-                reply_markup = InlineKeyboardMarkup(keyboard)
+                    product.image_path = None
+                    session.commit()
 
-                await query.edit_message_text(
-                    "✅ Product image removed successfully!",
-                    reply_markup=reply_markup
-                )
+            await asyncio.to_thread(_sync)
+
+            keyboard = [
+                [InlineKeyboardButton("✏️ Edit Another Product", callback_data="admin_edit_product")],
+                [InlineKeyboardButton("🔙 Back to Product Menu", callback_data="admin_products")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            await query.edit_message_text(
+                "✅ Product image removed successfully!",
+                reply_markup=reply_markup
+            )
 
             context.user_data.clear()
             return ConversationHandler.END
@@ -986,33 +1083,36 @@ async def edit_image_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
         os.makedirs(products_dir, exist_ok=True)
 
         # Save with unique filename
-        image_path = os.path.join(products_dir, f"product_{context.user_data['edit_product_id']}_{photo.file_id}.jpg")
+        product_id = context.user_data['edit_product_id']
+        image_path = os.path.join(products_dir, f"product_{product_id}_{photo.file_id}.jpg")
         await file.download_to_drive(image_path)
 
-        # Update product with new image
-        with get_db_session() as session:
-            product = session.query(Product).filter_by(id=context.user_data['edit_product_id']).first()
+        def _sync():
+            with get_db_session() as session:
+                product = session.query(Product).filter_by(id=product_id).first()
 
-            # Delete old image file if exists
-            if product.image_path and os.path.exists(product.image_path):
-                try:
-                    os.remove(product.image_path)
-                except Exception:
-                    logger.exception("Error deleting old image")
+                # Delete old image file if exists
+                if product.image_path and os.path.exists(product.image_path):
+                    try:
+                        os.remove(product.image_path)
+                    except Exception:
+                        logger.exception("Error deleting old image")
 
-            product.image_path = image_path
-            session.commit()
+                product.image_path = image_path
+                session.commit()
 
-            keyboard = [
-                [InlineKeyboardButton("✏️ Edit Another Product", callback_data="admin_edit_product")],
-                [InlineKeyboardButton("🔙 Back to Product Menu", callback_data="admin_products")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
+        await asyncio.to_thread(_sync)
 
-            await update.message.reply_text(
-                "✅ Product image updated successfully!",
-                reply_markup=reply_markup
-            )
+        keyboard = [
+            [InlineKeyboardButton("✏️ Edit Another Product", callback_data="admin_edit_product")],
+            [InlineKeyboardButton("🔙 Back to Product Menu", callback_data="admin_products")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(
+            "✅ Product image updated successfully!",
+            reply_markup=reply_markup
+        )
 
         context.user_data.clear()
         return ConversationHandler.END
