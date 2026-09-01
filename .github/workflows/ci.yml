@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "claude/static-audit-t15f7x"]
   pull_request:
 
 jobs:
