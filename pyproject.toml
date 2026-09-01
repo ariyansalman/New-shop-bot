@@ -19,3 +19,10 @@ ignore = [
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+# Without this, `pytest tests/` (as opposed to `python -m pytest tests/`)
+# does not add the repo root to sys.path, so the app's own top-level
+# packages (database, config, handlers, ...) aren't importable - this bit
+# CI, which runs the bare `pytest` entry point, even though it worked
+# locally under `python -m pytest` (which prepends the cwd to sys.path
+# itself). Confirmed by reproducing locally with the bare `pytest` form.
+pythonpath = ["."]
