@@ -1,5 +1,12 @@
-"""Store settings: support/channel username, welcome message, store logo."""
+"""Store settings: support/channel username, welcome message, store logo.
 
+Same asyncio.to_thread refactor as the other handler modules: every
+"with get_db_session()" block's query/mutation work runs in a nested
+_sync() closure off the event loop, returning only plain data, with the
+final Telegram API call left on the event loop.
+"""
+
+import asyncio
 import logging
 import os
 from datetime import datetime
@@ -34,10 +41,12 @@ async def config_support_username(update: Update, context: ContextTypes.DEFAULT_
 
     context.user_data['setting_type'] = 'support_username'
 
-    # Get current support username
-    with get_db_session() as session:
-        settings = session.query(Settings).first()
-        current_value = settings.support_username if settings and settings.support_username else "Not set"
+    def _sync():
+        with get_db_session() as session:
+            settings = session.query(Settings).first()
+            return settings.support_username if settings and settings.support_username else "Not set"
+
+    current_value = await asyncio.to_thread(_sync)
 
     await query.edit_message_text(
         f"📞 Current support username: @{current_value}\n\nEnter the new support Telegram username (without @):"
@@ -59,10 +68,12 @@ async def config_channel_username(update: Update, context: ContextTypes.DEFAULT_
 
     context.user_data['setting_type'] = 'channel_username'
 
-    # Get current channel username
-    with get_db_session() as session:
-        settings = session.query(Settings).first()
-        current_value = settings.channel_username if settings and settings.channel_username else "Not set"
+    def _sync():
+        with get_db_session() as session:
+            settings = session.query(Settings).first()
+            return settings.channel_username if settings and settings.channel_username else "Not set"
+
+    current_value = await asyncio.to_thread(_sync)
 
     await query.edit_message_text(
         f"📢 Current channel username: @{current_value}\n\nEnter the new channel/group Telegram username (without @):"
@@ -75,26 +86,31 @@ async def setting_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
     setting_type = context.user_data['setting_type']
     value = update.message.text.strip().replace('@', '')
 
-    with get_db_session() as session:
-        settings = session.query(Settings).first()
+    def _sync():
+        with get_db_session() as session:
+            settings = session.query(Settings).first()
 
-        if not settings:
-            settings = Settings()
-            session.add(settings)
+            if not settings:
+                settings = Settings()
+                session.add(settings)
 
-        if setting_type == 'support_username':
-            settings.support_username = value
-            await update.message.reply_text(f"✅ Support username set to: @{value}")
-        elif setting_type == 'channel_username':
-            settings.channel_username = value
-            await update.message.reply_text(f"✅ Channel username set to: @{value}")
+            if setting_type == 'support_username':
+                settings.support_username = value
+            elif setting_type == 'channel_username':
+                settings.channel_username = value
 
-        settings.updated_at = datetime.utcnow()
-        session.commit()
+            settings.updated_at = datetime.utcnow()
+            session.commit()
+
+    await asyncio.to_thread(_sync)
+
+    if setting_type == 'support_username':
+        await update.message.reply_text(f"✅ Support username set to: @{value}")
+    elif setting_type == 'channel_username':
+        await update.message.reply_text(f"✅ Channel username set to: @{value}")
 
     context.user_data.clear()
     return ConversationHandler.END
-
 
 
 # ==================== WELCOME MESSAGE FLOW ====================
@@ -111,10 +127,12 @@ async def config_welcome_message(update: Update, context: ContextTypes.DEFAULT_T
 
     await query.answer()
 
-    # Get current welcome message
-    with get_db_session() as session:
-        settings = session.query(Settings).first()
-        current_msg = settings.welcome_message if settings else "Welcome to our Digital Products Store!"
+    def _sync():
+        with get_db_session() as session:
+            settings = session.query(Settings).first()
+            return settings.welcome_message if settings else "Welcome to our Digital Products Store!"
+
+    current_msg = await asyncio.to_thread(_sync)
 
     from utils import create_cancel_keyboard
     await query.edit_message_text(
@@ -129,25 +147,26 @@ async def config_welcome_message(update: Update, context: ContextTypes.DEFAULT_T
 
 async def welcome_message_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle new welcome message value."""
-    from utils import create_admin_settings_menu_keyboard
-
     new_message = update.message.text
 
-    # Update welcome message in database
-    with get_db_session() as session:
-        settings = session.query(Settings).first()
-        if not settings:
-            settings = Settings()
-            session.add(settings)
-        
-        settings.welcome_message = new_message
-        session.commit()
+    def _sync():
+        with get_db_session() as session:
+            settings = session.query(Settings).first()
+            if not settings:
+                settings = Settings()
+                session.add(settings)
 
-        await update.message.reply_text(
-            f"✅ Welcome message updated successfully!\n\n"
-            f"New message:\n{new_message}",
-            reply_markup=create_admin_settings_menu_keyboard()
-        )
+            settings.welcome_message = new_message
+            session.commit()
+
+    await asyncio.to_thread(_sync)
+
+    from utils import create_admin_settings_menu_keyboard
+    await update.message.reply_text(
+        f"✅ Welcome message updated successfully!\n\n"
+        f"New message:\n{new_message}",
+        reply_markup=create_admin_settings_menu_keyboard()
+    )
 
     context.user_data.clear()
     return ConversationHandler.END
@@ -167,14 +186,16 @@ async def config_store_logo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.answer()
 
-    # Get current logo status
-    with get_db_session() as session:
-        settings = session.query(Settings).first()
-        has_logo = settings and settings.store_logo_path and os.path.exists(settings.store_logo_path)
+    def _sync():
+        with get_db_session() as session:
+            settings = session.query(Settings).first()
+            return bool(settings and settings.store_logo_path and os.path.exists(settings.store_logo_path))
+
+    has_logo = await asyncio.to_thread(_sync)
 
     from utils import create_cancel_keyboard
     status_text = "✅ Logo is set" if has_logo else "❌ No logo set"
-    
+
     await query.edit_message_text(
         f"🖼 Store Logo Configuration\n\n"
         f"Current status: {status_text}\n\n"
@@ -187,14 +208,12 @@ async def config_store_logo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def store_logo_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle new store logo image."""
-    from utils import create_admin_settings_menu_keyboard
-
     # Get the photo
     photo = update.message.photo[-1]  # Get highest resolution
-    
+
     # Download the photo
     file = await context.bot.get_file(photo.file_id)
-    
+
     # Use the configured logo directory instead of a hardcoded "uploads" path.
     logos_dir = app_settings.LOGOS_DIR
     os.makedirs(logos_dir, exist_ok=True)
@@ -203,27 +222,30 @@ async def store_logo_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file_path = os.path.join(logos_dir, f"store_logo_{photo.file_id}.jpg")
     await file.download_to_drive(file_path)
 
-    # Update store logo path in database
-    with get_db_session() as session:
-        settings = session.query(Settings).first()
-        if not settings:
-            settings = Settings()
-            session.add(settings)
-        
-        # Delete old logo if exists
-        if settings.store_logo_path and os.path.exists(settings.store_logo_path):
-            try:
-                os.remove(settings.store_logo_path)
-            except OSError:
-                pass
-        
-        settings.store_logo_path = file_path
-        session.commit()
+    def _sync():
+        with get_db_session() as session:
+            settings = session.query(Settings).first()
+            if not settings:
+                settings = Settings()
+                session.add(settings)
 
-        await update.message.reply_text(
-            "✅ Store logo updated successfully!",
-            reply_markup=create_admin_settings_menu_keyboard()
-        )
+            # Delete old logo if exists
+            if settings.store_logo_path and os.path.exists(settings.store_logo_path):
+                try:
+                    os.remove(settings.store_logo_path)
+                except OSError:
+                    pass
+
+            settings.store_logo_path = file_path
+            session.commit()
+
+    await asyncio.to_thread(_sync)
+
+    from utils import create_admin_settings_menu_keyboard
+    await update.message.reply_text(
+        "✅ Store logo updated successfully!",
+        reply_markup=create_admin_settings_menu_keyboard()
+    )
 
     context.user_data.clear()
     return ConversationHandler.END

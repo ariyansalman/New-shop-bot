@@ -45,10 +45,13 @@ async def broadcast_text_message(update: Update, context: ContextTypes.DEFAULT_T
 
     message_text = update.message.text
 
-    # Get all users (banned users must not receive broadcasts)
-    with get_db_session() as session:
-        users = session.query(User).filter_by(is_banned=False).all()
-        recipient_ids = [u.telegram_id for u in users]
+    def _sync():
+        # Get all users (banned users must not receive broadcasts)
+        with get_db_session() as session:
+            users = session.query(User).filter_by(is_banned=False).all()
+            return [u.telegram_id for u in users]
+
+    recipient_ids = await asyncio.to_thread(_sync)
 
     if not recipient_ids:
         await update.message.reply_text(
@@ -142,10 +145,13 @@ async def broadcast_image_text(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data.clear()
         return ConversationHandler.END
 
-    # Get all users (banned users must not receive broadcasts)
-    with get_db_session() as session:
-        users = session.query(User).filter_by(is_banned=False).all()
-        recipient_ids = [u.telegram_id for u in users]
+    def _sync():
+        # Get all users (banned users must not receive broadcasts)
+        with get_db_session() as session:
+            users = session.query(User).filter_by(is_banned=False).all()
+            return [u.telegram_id for u in users]
+
+    recipient_ids = await asyncio.to_thread(_sync)
 
     if not recipient_ids:
         await update.message.reply_text(
