@@ -226,6 +226,7 @@ work (see git log / commit messages for detail on each):
 - **`webhook_server.py` runs Flask's dev server** -> already moved to
   waitress, and the webhook does have a bot instance to notify through
   (`app.py`'s `_make_threadsafe_notifier`); this item was stale.
-
-"No tests" is being worked on next in the same pass (see the project's task
-list / commit history for current status).
+- **No tests** -> `tests/` (pytest), 29 tests covering the purchase flow,
+  the webhook/poller double-credit race, refund idempotency, and the
+  restock stock-count bug found along the way. See `CONTRIBUTING.md` for
+  how to run them.
