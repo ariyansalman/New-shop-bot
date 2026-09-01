@@ -448,6 +448,7 @@ def build_application(post_init=None):
 
     # Admin callback handlers
     application.add_handler(CallbackQueryHandler(admin_handlers.admin_menu_callback, pattern="^admin_menu$"))
+    application.add_handler(CallbackQueryHandler(admin_handlers.admin_action_log_callback, pattern="^admin_action_log$"))
     application.add_handler(CallbackQueryHandler(admin_handlers.admin_products_callback, pattern="^admin_products$"))
     application.add_handler(CallbackQueryHandler(admin_handlers.admin_restock_keys_callback, pattern="^admin_restock_keys$"))
     application.add_handler(CallbackQueryHandler(admin_handlers.admin_manage_categories_callback, pattern="^admin_manage_categories$"))
@@ -477,17 +478,22 @@ def build_application(post_init=None):
     application.add_handler(CallbackQueryHandler(admin_handlers.noop_callback, pattern="^noop$"))
 
     # Restock keys conversation handler
+    # filters.User(user_id=list(...)) so every configured admin (not just the
+    # single legacy ADMIN_TELEGRAM_ID) can restock - the entry point already
+    # checks is_admin(), but the follow-up MessageHandlers need their own
+    # filter since a plain text/document message is not a callback query.
+    admin_ids = list(settings.ADMIN_IDS)
     restock_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(admin_handlers.admin_select_product_restock_callback, pattern="^select_product_")],
         states={
             admin_handlers.WAITING_FOR_KEYS: [
-                MessageHandler(filters.Document.ALL & filters.User(settings.ADMIN_TELEGRAM_ID), admin_handlers.handle_restock_keys_file),
-                MessageHandler(filters.TEXT & ~filters.COMMAND & filters.User(settings.ADMIN_TELEGRAM_ID), admin_handlers.handle_restock_keys_paste),
+                MessageHandler(filters.Document.ALL & filters.User(user_id=admin_ids), admin_handlers.handle_restock_keys_file),
+                MessageHandler(filters.TEXT & ~filters.COMMAND & filters.User(user_id=admin_ids), admin_handlers.handle_restock_keys_paste),
             ],
         },
         fallbacks=[
             CallbackQueryHandler(admin_handlers.cancel_restock, pattern="^cancel_restock$"),
-            CommandHandler("cancel", admin_handlers.cancel_restock, filters=filters.User(settings.ADMIN_TELEGRAM_ID)),
+            CommandHandler("cancel", admin_handlers.cancel_restock, filters=filters.User(user_id=admin_ids)),
         ],
     )
     application.add_handler(restock_conv)

@@ -8,7 +8,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 from database import (
     get_db_session, Category, Subcategory, Product, ProductType, Settings
 )
-from utils import is_admin, format_price, money_or_none, create_admin_product_menu_keyboard, create_admin_category_menu_keyboard
+from utils import is_admin, format_price, money_or_none, log_admin_action, create_admin_product_menu_keyboard, create_admin_category_menu_keyboard
 from config.settings import settings as app_settings
 
 # Conversation states for product creation
@@ -1580,6 +1580,9 @@ async def edit_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=InlineKeyboardMarkup(cancel_keyboard)
                 )
                 return EDIT_NEW_VALUE
+            log_admin_action(session, update.effective_user.id, "edit_product_price",
+                              target_type="product", target_id=product.id,
+                              details=f"old={product.price}, new={new_price}")
             product.price = new_price
 
         session.commit()

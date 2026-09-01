@@ -255,3 +255,26 @@ class Dispute(Base):
     # Relationships
     order = relationship("Order", back_populates="disputes")
     user = relationship("User")
+
+
+class AdminActionLog(Base):
+    """Audit trail for moderation/money-moving admin actions.
+
+    Written by utils.audit.log_admin_action(), called from the handlers that
+    ban/unban, cancel or reactivate orders, confirm or cancel payments,
+    resolve disputes, restock keys, and edit product prices. Not every admin
+    action is logged (e.g. routine browsing) - this is for the ones an admin
+    would plausibly need to explain later.
+    """
+    __tablename__ = 'admin_action_logs'
+
+    id = Column(Integer, primary_key=True)
+    # Telegram ID, not a users.id FK: the admin performing the action isn't
+    # necessarily a row in `users` (that table is for customers), and we
+    # want the log to stay readable even if that row is ever deleted.
+    admin_telegram_id = Column(BigInteger, nullable=False, index=True)
+    action = Column(String(100), nullable=False, index=True)
+    target_type = Column(String(50), nullable=True)
+    target_id = Column(Integer, nullable=True)
+    details = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)

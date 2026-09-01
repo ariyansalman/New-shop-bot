@@ -18,8 +18,12 @@ _BAN_CACHE_MAX = 10000  # Bound the cache so it cannot grow indefinitely
 
 
 def is_admin(user_id: int) -> bool:
-    """Check if a user is an admin based on Telegram ID."""
-    return user_id == settings.ADMIN_TELEGRAM_ID
+    """Check if a user is an admin based on Telegram ID.
+
+    Multiple admins are supported via ADMIN_TELEGRAM_IDS (comma-separated,
+    see config/settings.py); ADMIN_TELEGRAM_ID is always included too.
+    """
+    return user_id in settings.ADMIN_IDS
 
 
 def admin_only(func):

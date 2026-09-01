@@ -60,6 +60,24 @@ class Settings:
     except ValueError:
         ADMIN_TELEGRAM_ID = 0
     ADMIN_TELEGRAM_USERNAME = os.getenv('ADMIN_TELEGRAM_USERNAME', '')
+
+    # Extra admins beyond ADMIN_TELEGRAM_ID, comma-separated
+    # (e.g. "111111,222222"). ADMIN_TELEGRAM_ID stays as the single "primary"
+    # admin - the one broadcast completion / new-order notifications go to -
+    # this just widens who is_admin() accepts. Invalid entries are dropped
+    # with a warning rather than crashing the whole bot at import time.
+    ADMIN_IDS = set()
+    if ADMIN_TELEGRAM_ID:
+        ADMIN_IDS.add(ADMIN_TELEGRAM_ID)
+    for _raw_id in os.getenv('ADMIN_TELEGRAM_IDS', '').split(','):
+        _raw_id = _raw_id.strip()
+        if not _raw_id:
+            continue
+        try:
+            ADMIN_IDS.add(int(_raw_id))
+        except ValueError:
+            print(f"[WARN] Ignoring non-numeric entry in ADMIN_TELEGRAM_IDS: {_raw_id!r}")
+    del _raw_id
     # Used to build the CryptoBot "return to bot" button (without the leading @).
     BOT_USERNAME = os.getenv('BOT_USERNAME', '').lstrip('@')
 
@@ -119,6 +137,10 @@ def validate_settings():
 
     if not settings.ADMIN_TELEGRAM_ID:
         raise ValueError("ADMIN_TELEGRAM_ID is required and must be a number")
+
+    if len(settings.ADMIN_IDS) > 1:
+        print(f"[OK] {len(settings.ADMIN_IDS)} admins configured "
+              f"(ADMIN_TELEGRAM_ID + ADMIN_TELEGRAM_IDS)")
 
     if not settings.DATABASE_URL:
         raise ValueError("DATABASE_URL is required")

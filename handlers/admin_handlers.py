@@ -6,11 +6,11 @@ from telegram.ext import ContextTypes
 from sqlalchemy import func
 from database import (
     get_db_session, User, Category, Subcategory, Product, ProductKey,
-    Order, OrderItem, Transaction,
+    Order, OrderItem, Transaction, AdminActionLog,
     ProductType, OrderStatus, TransactionStatus
 )
 from utils import (
-    is_admin, admin_only, format_price, to_money,
+    is_admin, admin_only, format_price, to_money, log_admin_action,
     create_admin_main_menu_keyboard, create_admin_product_menu_keyboard,
     create_admin_category_menu_keyboard, create_admin_user_menu_keyboard,
     create_admin_order_menu_keyboard, create_admin_settings_menu_keyboard,
@@ -50,6 +50,38 @@ async def admin_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         "🔐 Admin Panel\n\nSelect an option:",
         reply_markup=create_admin_main_menu_keyboard()
     )
+
+
+async def admin_action_log_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show the most recent audit-logged admin actions (ban, refund, restock, ...)."""
+    query = update.callback_query
+
+    if not is_admin(update.effective_user.id):
+        await query.answer("⛔ Access denied.", show_alert=True)
+        return
+
+    await query.answer()
+
+    with get_db_session() as session:
+        entries = session.query(AdminActionLog).order_by(
+            AdminActionLog.created_at.desc()
+        ).limit(20).all()
+
+        if not entries:
+            message = "📜 Admin Action Log\n\nNo actions recorded yet."
+        else:
+            lines = ["📜 Admin Action Log (last 20)\n"]
+            for entry in entries:
+                when = entry.created_at.strftime('%Y-%m-%d %H:%M')
+                target = f" {entry.target_type}#{entry.target_id}" if entry.target_type else ""
+                line = f"{when} · admin {entry.admin_telegram_id} · {entry.action}{target}"
+                if entry.details:
+                    line += f" ({entry.details})"
+                lines.append(line)
+            message = "\n".join(lines)
+
+    keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="admin_menu")]]
+    await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def admin_restock_keys_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -483,6 +515,9 @@ async def admin_ban_user_callback(update: Update, context: ContextTypes.DEFAULT_
         telegram_id = user.telegram_id
 
         user.is_banned = True
+        log_admin_action(session, update.effective_user.id, "ban_user",
+                          target_type="user", target_id=user.id,
+                          details=f"telegram_id={telegram_id}")
         session.commit()
 
         # Clear ban cache for this user
@@ -559,6 +594,9 @@ async def admin_unban_user_callback(update: Update, context: ContextTypes.DEFAUL
         telegram_id = user.telegram_id
 
         user.is_banned = False
+        log_admin_action(session, update.effective_user.id, "unban_user",
+                          target_type="user", target_id=user.id,
+                          details=f"telegram_id={telegram_id}")
         session.commit()
 
         # Clear ban cache for this user
@@ -750,10 +788,17 @@ async def handle_restock_keys_file(update: Update, context: ContextTypes.DEFAULT
             ))
             added_count += 1
 
-        # Keep stock in sync with the real unsold-key count.
+        # Keep stock in sync with the real unsold-key count. The newly added
+        # keys above are already in this count: session.query() autoflushes
+        # pending session.add() calls before running, so they're already in
+        # the DB by the time count() runs - adding + added_count on top of
+        # that used to double-count every restock.
         product.stock_count = session.query(ProductKey).filter_by(
             product_id=product.id, is_sold=False
-        ).count() + added_count
+        ).count()
+        log_admin_action(session, update.effective_user.id, "restock_keys",
+                          target_type="product", target_id=product.id,
+                          details=f"added={added_count}, skipped_duplicates={skipped}")
         session.commit()
 
         # Create keyboard with options
@@ -826,10 +871,17 @@ async def handle_restock_keys_paste(update: Update, context: ContextTypes.DEFAUL
             ))
             added_count += 1
 
-        # Keep stock in sync with the real unsold-key count.
+        # Keep stock in sync with the real unsold-key count. The newly added
+        # keys above are already in this count: session.query() autoflushes
+        # pending session.add() calls before running, so they're already in
+        # the DB by the time count() runs - adding + added_count on top of
+        # that used to double-count every restock.
         product.stock_count = session.query(ProductKey).filter_by(
             product_id=product.id, is_sold=False
-        ).count() + added_count
+        ).count()
+        log_admin_action(session, update.effective_user.id, "restock_keys",
+                          target_type="product", target_id=product.id,
+                          details=f"added={added_count}, skipped_duplicates={skipped}")
         session.commit()
 
         # Create keyboard with options
@@ -973,6 +1025,9 @@ async def admin_reactivate_order_callback(update: Update, context: ContextTypes.
         # Take the refunded money back out and restore the order.
         user.wallet_balance = to_money(user.wallet_balance - order.total_amount)
         order.status = OrderStatus.PROCESSING
+        log_admin_action(session, update.effective_user.id, "reactivate_order",
+                          target_type="order", target_id=order.id,
+                          details=f"amount={order.total_amount}")
         session.commit()
 
     await query.answer("✅ Order reactivated.", show_alert=True)
@@ -1015,6 +1070,8 @@ async def admin_complete_order_callback(update: Update, context: ContextTypes.DE
 
         order.status = OrderStatus.COMPLETED
         order.completed_at = datetime.utcnow()
+        log_admin_action(session, update.effective_user.id, "complete_order",
+                          target_type="order", target_id=order.id)
         session.commit()
 
     # NOTE: query.answer() was already called at the top of this handler;
@@ -1120,6 +1177,9 @@ async def admin_confirm_payment_callback(update: Update, context: ContextTypes.D
 
         txn.status = TransactionStatus.COMPLETED
         txn.completed_at = datetime.utcnow()
+        log_admin_action(session, update.effective_user.id, "confirm_payment",
+                          target_type="transaction", target_id=txn.id,
+                          details=f"amount={txn.amount}")
         session.commit()
 
         amount = txn.amount
@@ -1169,6 +1229,9 @@ async def admin_cancel_payment_callback(update: Update, context: ContextTypes.DE
             return
 
         txn.status = TransactionStatus.FAILED
+        log_admin_action(session, update.effective_user.id, "cancel_payment",
+                          target_type="transaction", target_id=txn.id,
+                          details=f"amount={txn.amount}")
         session.commit()
 
         user = session.query(User).filter_by(id=txn.user_id).first()
@@ -1240,6 +1303,9 @@ async def admin_cancel_order_callback(update: Update, context: ContextTypes.DEFA
 
         # Mark order as cancelled
         order.status = OrderStatus.CANCELLED
+        log_admin_action(session, update.effective_user.id, "cancel_order",
+                          target_type="order", target_id=order.id,
+                          details=f"refund={order.total_amount}, keys_returned={len(returned_keys)}")
         session.commit()
 
         if user:

@@ -5,7 +5,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 from database import get_db_session, User, Order, Dispute, DisputeStatus
 from utils import (
     format_price, format_datetime, notify_admin, create_cancel_keyboard,
-    is_admin, check_user_banned
+    is_admin, check_user_banned, log_admin_action
 )
 from datetime import datetime
 
@@ -336,6 +336,9 @@ async def admin_resolve_dispute_callback(update: Update, context: ContextTypes.D
         # Update order dispute status
         order.dispute_status = DisputeStatus.RESOLVED
 
+        log_admin_action(session, update.effective_user.id, "resolve_dispute",
+                          target_type="dispute", target_id=dispute.id,
+                          details=f"order_id={order.id}")
         session.commit()
 
         # Get user telegram_id before closing session
