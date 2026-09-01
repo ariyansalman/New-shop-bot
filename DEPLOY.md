@@ -250,6 +250,12 @@ Database has tables but no Alembic version row. Detected it at revision
 aca145102282 from the schema itself; stamping and upgrading from there.
 ```
 
+The same recovery covers **a database stamped by a different Alembic setup** —
+an `alembic_version` naming a revision this project has never had, such as the
+sequential `0005` an older numbering scheme left behind. Alembic refuses to
+upgrade from a revision it cannot resolve (`Can't locate revision identified
+by '0005'`), so the row is replaced with the one the schema is actually at.
+
 To do it by hand instead, stamp the revision your schema is really at (see
 `_MIGRATION_PROBES` in `database/db.py` for what identifies each) and then
 `alembic upgrade head`.

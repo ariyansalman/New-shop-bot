@@ -184,6 +184,32 @@ def _detect_stamp_point(inspector) -> str:
     return applied
 
 
+def _recorded_revision(inspector):
+    """The revision in alembic_version, or None when there is no version row."""
+    from sqlalchemy import text
+
+    if not inspector.has_table("alembic_version"):
+        return None
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(text("SELECT version_num FROM alembic_version")).first()
+    except Exception:
+        logger.warning("Could not read alembic_version", exc_info=True)
+        return None
+    return row[0] if row else None
+
+
+def _revision_exists(cfg, revision: str) -> bool:
+    """Whether this project actually ships the given revision."""
+    from alembic.script import ScriptDirectory
+
+    try:
+        ScriptDirectory.from_config(cfg).get_revision(revision)
+        return True
+    except Exception:
+        return False
+
+
 def _sync_schema(inspector) -> None:
     """Bring an existing database up to the latest revision.
 
@@ -204,14 +230,29 @@ def _sync_schema(inspector) -> None:
         logger.warning("alembic.ini not found - skipping the schema upgrade")
         return
 
-    if not inspector.has_table("alembic_version"):
-        stamp_at = _detect_stamp_point(inspector)
-        logger.warning(
-            "Database has tables but no Alembic version row. Detected it at "
-            "revision %s from the schema itself; stamping and upgrading from "
-            "there.", stamp_at,
-        )
-        command.stamp(cfg, stamp_at)
+    recorded = _recorded_revision(inspector)
+
+    if recorded is None:
+        reason = "has tables but no Alembic version row"
+    elif not _revision_exists(cfg, recorded):
+        # The version row names a revision this project has never had - a
+        # database previously managed by a different Alembic setup (one that
+        # numbered its revisions 0001, 0002, ...). Alembic cannot upgrade
+        # from a revision it cannot resolve, so the row has to be replaced.
+        reason = f"is stamped {recorded!r}, which is not a revision of this project"
+    else:
+        command.upgrade(cfg, "head")
+        logger.info("Database schema is at the latest revision")
+        return
+
+    stamp_at = _detect_stamp_point(inspector)
+    logger.warning(
+        "Database %s. Detected it at revision %s from the schema itself; "
+        "stamping and upgrading from there.", reason, stamp_at,
+    )
+    # purge drops the existing version row first: stamping on top of an
+    # unresolvable one would leave both behind and read as a branched head.
+    command.stamp(cfg, stamp_at, purge=True)
 
     command.upgrade(cfg, "head")
     logger.info("Database schema is at the latest revision")

@@ -126,6 +126,60 @@ def test_booting_twice_on_a_legacy_database_is_a_no_op(boot):
     assert version_of(path) == HEAD
 
 
+_FOREIGN_VERSION_TABLE = """
+CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL);
+INSERT INTO alembic_version VALUES ('0005');
+"""
+
+
+def test_database_stamped_by_a_different_alembic_setup_is_recovered(boot):
+    """The second production failure: alembic_version says '0005'.
+
+    A database previously managed by another Alembic setup, one that
+    numbered revisions 0001..0005. Alembic cannot upgrade from a revision
+    it cannot resolve ("Can't locate revision identified by '0005'"), so
+    the row is replaced with the revision the schema is really at.
+    """
+    path, engine = boot("foreign.db", _LEGACY_SCHEMA + _FOREIGN_VERSION_TABLE)
+
+    assert version_of(path) == HEAD
+    assert "binance_pay_enabled" in columns(engine, "settings")
+    assert "provider" in columns(engine, "transactions")
+
+
+def test_recovering_a_foreign_stamp_leaves_exactly_one_version_row(boot):
+    """Two rows would read as a branched head and break the next upgrade."""
+    path, _engine = boot("foreign_single.db", _LEGACY_SCHEMA + _FOREIGN_VERSION_TABLE)
+
+    conn = sqlite3.connect(path)
+    try:
+        rows = conn.execute("SELECT version_num FROM alembic_version").fetchall()
+    finally:
+        conn.close()
+    assert rows == [(HEAD,)]
+
+
+def test_recovering_a_foreign_stamp_keeps_the_existing_data(boot):
+    path, _engine = boot("foreign_data.db", _LEGACY_SCHEMA + _FOREIGN_VERSION_TABLE)
+
+    conn = sqlite3.connect(path)
+    try:
+        assert conn.execute("SELECT wallet_balance FROM users").fetchone()[0] == 42.5
+        assert conn.execute(
+            "SELECT welcome_message FROM settings").fetchone()[0] == "existing store"
+    finally:
+        conn.close()
+
+
+def test_a_valid_stamp_is_left_alone(boot):
+    """A correctly stamped database must not be re-detected and re-stamped."""
+    path, _engine = boot("valid_stamp.db")      # fresh -> stamped at head
+    assert version_of(path) == HEAD
+
+    db.init_db()                                 # boots again, nothing to do
+    assert version_of(path) == HEAD
+
+
 def test_fresh_database_is_stamped_not_migrated(boot):
     """create_all() already built head - running migrations over it fails."""
     path, engine = boot("fresh.db")
