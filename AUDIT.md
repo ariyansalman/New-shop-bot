@@ -212,17 +212,20 @@ doubled `stock_count` and the same key could be delivered to two customers.
 
 ## Remaining recommendations (not changed)
 
-1. **Money as `Float`.** `wallet_balance`, `price` and `total_amount` are
-   floating point, so rounding error accumulates. Migrate to `Numeric(12, 2)`
-   or store integer cents.
-2. **SQLite + `with_for_update()`.** Row locks are a no-op on SQLite; the new
+1. **SQLite + `with_for_update()`.** Row locks are a no-op on SQLite; the new
    locking only takes effect on PostgreSQL/MySQL. For real concurrency, move the
    database.
-3. **`webhook_server.py` runs Flask's dev server.** Put it behind
-   gunicorn + HTTPS, and give it a way to notify the user (it currently has no
-   bot instance and only leaves a TODO).
-4. **No tests.** The payment and key-assignment paths in particular deserve
-   coverage before further changes.
-5. **`stock_count` is denormalized** from `product_keys`. It is now recomputed on
+2. **`stock_count` is denormalized** from `product_keys`. It is now recomputed on
    restock and repaired on shortage, but a periodic reconciliation job would be
    safer.
+
+Resolved since the first pass, as part of the "make this more professional"
+work (see git log / commit messages for detail on each):
+- **Money as `Float`** -> `Numeric(12, 2)` columns + `decimal.Decimal`
+  arithmetic throughout (`utils/money.py`), via an Alembic migration.
+- **`webhook_server.py` runs Flask's dev server** -> already moved to
+  waitress, and the webhook does have a bot instance to notify through
+  (`app.py`'s `_make_threadsafe_notifier`); this item was stale.
+
+"No tests" is being worked on next in the same pass (see the project's task
+list / commit history for current status).

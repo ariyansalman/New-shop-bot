@@ -10,7 +10,7 @@ from database import (
     ProductType, OrderStatus, TransactionStatus
 )
 from utils import (
-    is_admin, admin_only, format_price,
+    is_admin, admin_only, format_price, to_money,
     create_admin_main_menu_keyboard, create_admin_product_menu_keyboard,
     create_admin_category_menu_keyboard, create_admin_user_menu_keyboard,
     create_admin_order_menu_keyboard, create_admin_settings_menu_keyboard,
@@ -971,7 +971,7 @@ async def admin_reactivate_order_callback(update: Update, context: ContextTypes.
             return
 
         # Take the refunded money back out and restore the order.
-        user.wallet_balance -= order.total_amount
+        user.wallet_balance = to_money(user.wallet_balance - order.total_amount)
         order.status = OrderStatus.PROCESSING
         session.commit()
 
@@ -1116,7 +1116,7 @@ async def admin_confirm_payment_callback(update: Update, context: ContextTypes.D
 
         user = session.query(User).filter_by(id=txn.user_id).first()
         if user:
-            user.wallet_balance += txn.amount
+            user.wallet_balance = to_money(user.wallet_balance + txn.amount)
 
         txn.status = TransactionStatus.COMPLETED
         txn.completed_at = datetime.utcnow()
@@ -1226,7 +1226,7 @@ async def admin_cancel_order_callback(update: Update, context: ContextTypes.DEFA
         # Refund user
         user = session.query(User).filter_by(id=order.user_id).first()
         if user:
-            user.wallet_balance += order.total_amount
+            user.wallet_balance = to_money(user.wallet_balance + order.total_amount)
 
         # Return the keys that were assigned to this order back to stock.
         returned_keys = session.query(ProductKey).filter_by(order_id=order.id, is_sold=True).all()

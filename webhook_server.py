@@ -17,12 +17,14 @@ import hmac
 import hashlib
 import logging
 from datetime import datetime
+from decimal import Decimal
 
 from flask import Flask, request, jsonify
 
 from database.db import get_db_session
 from database.models import Transaction, TransactionStatus, PaymentMethod, User
 from config.settings import settings
+from utils.money import to_money, money_or_none
 
 logger = logging.getLogger(__name__)
 
@@ -116,13 +118,16 @@ def process_invoice_paid(invoice_data: dict):
                 return
 
             # Do not credit more than the invoice was actually issued for.
-            try:
-                if invoice_amount is not None and float(invoice_amount) + 0.01 < float(transaction.amount):
-                    logger.error("Amount mismatch for invoice %s: invoice=%s expected=%s",
-                                 invoice_id, invoice_amount, transaction.amount)
-                    return
-            except (TypeError, ValueError):
+            # money_or_none goes through Decimal(str(x)) rather than float(),
+            # so a JSON amount like 19.99 doesn't pick up binary-float noise
+            # before being compared.
+            invoice_amount_dec = money_or_none(invoice_amount) if invoice_amount is not None else None
+            if invoice_amount is not None and invoice_amount_dec is None:
                 logger.error("Unparsable invoice amount for %s: %r", invoice_id, invoice_amount)
+                return
+            if invoice_amount_dec is not None and invoice_amount_dec + Decimal("0.01") < transaction.amount:
+                logger.error("Amount mismatch for invoice %s: invoice=%s expected=%s",
+                             invoice_id, invoice_amount, transaction.amount)
                 return
 
             user = session.query(User).filter_by(id=transaction.user_id).first()
@@ -132,7 +137,7 @@ def process_invoice_paid(invoice_data: dict):
 
             transaction.status = TransactionStatus.COMPLETED
             transaction.completed_at = datetime.utcnow()
-            user.wallet_balance = round(user.wallet_balance + transaction.amount, 2)
+            user.wallet_balance = to_money(user.wallet_balance + transaction.amount)
 
             notify = (user.telegram_id, transaction.amount, user.wallet_balance, transaction.id)
             logger.info("Payment credited via webhook: txn #%s, $%.2f",

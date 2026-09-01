@@ -1,14 +1,20 @@
 """Database models for the Telegram digital products store bot."""
 
 from sqlalchemy import (
-    Column, Integer, BigInteger, String, Float, Boolean, DateTime,
+    Column, Integer, BigInteger, String, Numeric, Boolean, DateTime,
     ForeignKey, Text, Enum, CheckConstraint, UniqueConstraint
 )
 from sqlalchemy.orm import relationship, declarative_base
 from datetime import datetime
+from decimal import Decimal
 import enum
 
 Base = declarative_base()
+
+# All money columns use this: fixed-precision storage (no binary-float
+# drift at rest) and Python-side Decimal values (see utils/money.py -
+# to_money() is what keeps arithmetic on those values exact too).
+Money = Numeric(12, 2)
 
 
 class ProductType(enum.Enum):
@@ -53,7 +59,7 @@ class User(Base):
     # Telegram user IDs already exceed the signed 32-bit range -> BigInteger.
     telegram_id = Column(BigInteger, unique=True, nullable=False, index=True)
     username = Column(String(255))
-    wallet_balance = Column(Float, default=0.0, nullable=False)
+    wallet_balance = Column(Money, default=Decimal("0.00"), nullable=False)
     is_banned = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -102,7 +108,7 @@ class Product(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String(255), nullable=False)
     description = Column(Text)
-    price = Column(Float, nullable=False)
+    price = Column(Money, nullable=False)
     stock_count = Column(Integer, default=0)
     product_type = Column(Enum(ProductType), nullable=False)
     category_id = Column(Integer, ForeignKey('categories.id'), nullable=True)
@@ -162,7 +168,7 @@ class Order(Base):
 
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False, index=True)
-    total_amount = Column(Float, nullable=False)
+    total_amount = Column(Money, nullable=False)
     status = Column(Enum(OrderStatus), default=OrderStatus.PROCESSING)
     dispute_status = Column(Enum(DisputeStatus), default=DisputeStatus.NIL)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -183,7 +189,7 @@ class OrderItem(Base):
     order_id = Column(Integer, ForeignKey('orders.id'), nullable=False, index=True)
     product_id = Column(Integer, ForeignKey('products.id'), nullable=False)
     quantity = Column(Integer, nullable=False)
-    price = Column(Float, nullable=False)
+    price = Column(Money, nullable=False)
     delivered_asset = Column(Text, nullable=True)  # Keys or download link
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -198,7 +204,7 @@ class Transaction(Base):
 
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False, index=True)
-    amount = Column(Float, nullable=False)
+    amount = Column(Money, nullable=False)
     payment_method = Column(Enum(PaymentMethod), nullable=False)
     crypto_address = Column(String(500), nullable=True)
     status = Column(Enum(TransactionStatus), default=TransactionStatus.PENDING, index=True)

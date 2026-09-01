@@ -1,13 +1,14 @@
 """Helper utility functions for the Telegram bot."""
 
-import math
 import threading
 from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from functools import wraps
 from telegram import Update
 from telegram.ext import ContextTypes
 from config.settings import settings
 from database import get_db_session, User
+from .money import to_money
 
 # In-memory cache for ban status (telegram_id: (is_banned, timestamp))
 _ban_cache = {}
@@ -65,9 +66,9 @@ def get_or_create_user(telegram_id: int, username: str = None) -> dict:
         }
 
 
-def format_price(price: float) -> str:
-    """Format price to standard USD format."""
-    return f"${price:.2f}"
+def format_price(price) -> str:
+    """Format a money value (Decimal, float or int) to standard USD format."""
+    return f"${to_money(price):.2f}"
 
 
 def format_datetime(dt: datetime) -> str:
@@ -96,23 +97,28 @@ def paginate_items(items, page: int, page_size: int = 5):
 
 
 def validate_amount(amount_str: str) -> tuple:
-    """Validate user input for payment amount."""
+    """Validate user input for payment amount. Returns (ok, Decimal amount, error)."""
     try:
         cleaned = (amount_str or "").strip().replace(",", "").replace("$", "")
-        amount = float(cleaned)
-    except (ValueError, AttributeError):
+        amount = Decimal(cleaned)
+    except (InvalidOperation, ValueError, AttributeError):
         return False, 0, "Invalid amount. Please enter a valid number."
 
-    # float() happily accepts "nan" and "inf".
-    if not math.isfinite(amount):
+    # Decimal("nan") / Decimal("inf") parse without raising, just like float().
+    if not amount.is_finite():
         return False, 0, "Invalid amount. Please enter a valid number."
 
-    amount = round(amount, 2)
+    amount = to_money(amount)
 
-    if amount < settings.MIN_TOPUP_AMOUNT:
-        return False, 0, f"Minimum amount is {settings.MIN_TOPUP_AMOUNT:.2f} USD."
-    if amount > settings.MAX_TOPUP_AMOUNT:
-        return False, 0, f"Amount is too large. Maximum is ${settings.MAX_TOPUP_AMOUNT:,.2f}."
+    # settings.MIN/MAX_TOPUP_AMOUNT are plain floats (env-var parsed); Decimal
+    # can't be compared against float directly, so normalize both sides.
+    min_amount = to_money(settings.MIN_TOPUP_AMOUNT)
+    max_amount = to_money(settings.MAX_TOPUP_AMOUNT)
+
+    if amount < min_amount:
+        return False, 0, f"Minimum amount is {min_amount:.2f} USD."
+    if amount > max_amount:
+        return False, 0, f"Amount is too large. Maximum is ${max_amount:,.2f}."
     return True, amount, ""
 
 

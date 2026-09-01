@@ -1,10 +1,12 @@
 """Crypto Bot API service for cryptocurrency payments."""
 
 import logging
+from decimal import Decimal
 
 import requests
 
 from config.settings import settings
+from utils.money import money_or_none
 
 logger = logging.getLogger(__name__)
 
@@ -178,16 +180,21 @@ class CryptoBotService:
                         # credited with `expected_amount` no matter what the
                         # invoice actually said.
                         invoice_amount = invoice.get("amount")
-                        try:
-                            if invoice_amount is not None and float(invoice_amount) + 0.01 < float(expected_amount):
+                        if invoice_amount is not None:
+                            # money_or_none goes through Decimal(str(x)), not
+                            # float(), so the comparison isn't affected by
+                            # binary-float noise in the JSON-decoded amount.
+                            invoice_amount_dec = money_or_none(invoice_amount)
+                            expected_amount_dec = money_or_none(expected_amount)
+                            if invoice_amount_dec is None or expected_amount_dec is None:
+                                logger.error("Invoice %s has an unparsable amount: %r", invoice_id, invoice_amount)
+                                return False
+                            if invoice_amount_dec + Decimal("0.01") < expected_amount_dec:
                                 logger.error(
                                     "Invoice %s amount mismatch: invoice=%s expected=%s - not crediting",
                                     invoice_id, invoice_amount, expected_amount
                                 )
                                 return False
-                        except (TypeError, ValueError):
-                            logger.error("Invoice %s has an unparsable amount: %r", invoice_id, invoice_amount)
-                            return False
 
                         logger.info("Invoice %s is paid (status=%s)", invoice_id, status)
                         return True

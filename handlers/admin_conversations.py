@@ -8,7 +8,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 from database import (
     get_db_session, Category, Subcategory, Product, ProductType, Settings
 )
-from utils import is_admin, format_price, create_admin_product_menu_keyboard, create_admin_category_menu_keyboard
+from utils import is_admin, format_price, money_or_none, create_admin_product_menu_keyboard, create_admin_category_menu_keyboard
 from config.settings import settings as app_settings
 
 # Conversation states for product creation
@@ -98,35 +98,34 @@ async def product_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Create cancel button for error messages
     cancel_keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel_product")]]
 
-    try:
-        price = float(update.message.text)
-        if price <= 0:
-            await update.message.reply_text(
-                "❌ Price must be greater than 0. Please enter a valid price:",
-                reply_markup=InlineKeyboardMarkup(cancel_keyboard)
-            )
-            return PRODUCT_PRICE
-
-        context.user_data['product_price'] = price
-
-        # Ask for product type
-        keyboard = [
-            [InlineKeyboardButton("🔑 Software Key", callback_data="type_key")],
-            [InlineKeyboardButton("📁 Downloadable File", callback_data="type_file")],
-            [InlineKeyboardButton("❌ Cancel", callback_data="cancel_product")]
-        ]
-        await update.message.reply_text(
-            "📦 Select product type:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        return PRODUCT_TYPE
-
-    except ValueError:
+    price = money_or_none(update.message.text)
+    if price is None:
         await update.message.reply_text(
             "❌ Invalid price. Please enter a number:",
             reply_markup=InlineKeyboardMarkup(cancel_keyboard)
         )
         return PRODUCT_PRICE
+
+    if price <= 0:
+        await update.message.reply_text(
+            "❌ Price must be greater than 0. Please enter a valid price:",
+            reply_markup=InlineKeyboardMarkup(cancel_keyboard)
+        )
+        return PRODUCT_PRICE
+
+    context.user_data['product_price'] = price
+
+    # Ask for product type
+    keyboard = [
+        [InlineKeyboardButton("🔑 Software Key", callback_data="type_key")],
+        [InlineKeyboardButton("📁 Downloadable File", callback_data="type_file")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="cancel_product")]
+    ]
+    await update.message.reply_text(
+        "📦 Select product type:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return PRODUCT_TYPE
 
 
 async def product_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1573,15 +1572,15 @@ async def edit_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif field == 'desc':
             product.description = new_value
         elif field == 'price':
-            try:
-                product.price = float(new_value)
-            except ValueError:
+            new_price = money_or_none(new_value)
+            if new_price is None or new_price <= 0:
                 cancel_keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel_edit")]]
                 await update.message.reply_text(
-                    "❌ Invalid price. Please enter a valid number:",
+                    "❌ Invalid price. Please enter a valid number greater than 0:",
                     reply_markup=InlineKeyboardMarkup(cancel_keyboard)
                 )
                 return EDIT_NEW_VALUE
+            product.price = new_price
 
         session.commit()
 

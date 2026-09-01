@@ -8,7 +8,7 @@ from database import (
     ProductKey, TransactionStatus, OrderStatus, PaymentMethod, ProductType
 )
 from utils import (
-    format_price, validate_amount,
+    format_price, validate_amount, to_money,
     create_cancel_keyboard, create_payment_method_keyboard,
     create_quantity_keyboard, create_main_menu_keyboard,
     calculate_expiry_time, notify_admin, check_user_banned
@@ -275,7 +275,9 @@ Please complete the secure card payment below 👇"""
         pass
 
     # Telegram expects the price in the smallest currency unit (e.g. cents for USD).
-    prices = [LabeledPrice(label="Wallet Top-up", amount=int(round(usd_amount * 100)))]
+    # usd_amount is already cent-quantized (validate_amount -> to_money), so
+    # *100 is an exact integer value; to_money() here is just defense in depth.
+    prices = [LabeledPrice(label="Wallet Top-up", amount=int(to_money(usd_amount) * 100))]
 
     await context.bot.send_invoice(
         chat_id=update.effective_chat.id,
@@ -357,7 +359,7 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
 
         user = session.query(User).filter_by(id=transaction.user_id).first()
         if user:
-            user.wallet_balance += transaction.amount
+            user.wallet_balance = to_money(user.wallet_balance + transaction.amount)
             session.commit()
             notif = {
                 'telegram_id': user.telegram_id,
@@ -468,7 +470,7 @@ async def check_pending_payments(context: ContextTypes.DEFAULT_TYPE):
                     # Update user wallet balance
                     user = session.query(User).filter_by(id=locked_txn.user_id).first()
                     if user:
-                        user.wallet_balance += locked_txn.amount
+                        user.wallet_balance = to_money(user.wallet_balance + locked_txn.amount)
                         session.commit()
 
                         # Store notification data
@@ -685,7 +687,7 @@ async def show_purchase_confirmation(update: Update, context: ContextTypes.DEFAU
     product_price = context.user_data.get('purchase_product_price')
     quantity = context.user_data.get('purchase_quantity')
 
-    total = product_price * quantity
+    total = to_money(product_price * quantity)
     telegram_id = update.effective_user.id
 
     with get_db_session() as session:
@@ -793,7 +795,7 @@ async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text(f"❌ Not enough stock. Only {product.stock_count} available.")
                 return
 
-            total = round(product.price * quantity, 2)
+            total = to_money(product.price * quantity)
 
             if user.wallet_balance < total:
                 await query.edit_message_text(
@@ -852,7 +854,7 @@ async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 order_details = f"📦 {product.name}\n🔗 Download: {order_item.delivered_asset}\n"
 
             product.stock_count -= quantity
-            user.wallet_balance = round(user.wallet_balance - total, 2)
+            user.wallet_balance = to_money(user.wallet_balance - total)
 
             session.add(order_item)
             # commit happens on context-manager exit; a failure anywhere above
