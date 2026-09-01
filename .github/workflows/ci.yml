@@ -83,3 +83,36 @@ jobs:
         run: |
           alembic downgrade base
           alembic upgrade head
+
+  docker-build:
+    name: Docker build + boot smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: docker build
+        run: docker build -t shopbot:ci .
+
+      - name: Boot smoke test
+        # A real BOT_TOKEN isn't available in CI, so this can't prove the
+        # bot successfully starts polling - but the container reaching (and
+        # logging) "Database initialization complete" proves the image
+        # actually has every dependency, that app.py's config validation +
+        # SQLite init run cleanly inside it, and that CMD is wired up
+        # correctly. It fails a few seconds later on the fake token
+        # against the real Telegram API, which is the expected/correct
+        # failure mode for this test, not a problem it needs to survive.
+        run: |
+          CID=$(docker run -d \
+            -e BOT_TOKEN="000000:invalid-token-for-ci-smoke-test" \
+            -e ADMIN_TELEGRAM_ID="1" \
+            -e DATABASE_URL="sqlite:////tmp/ci_smoke.db" \
+            -e WEBHOOK_ENABLED="false" \
+            shopbot:ci)
+          sleep 8
+          echo "--- container logs ---"
+          docker logs "$CID"
+          docker logs "$CID" 2>&1 | grep -q "Database initialization complete" \
+            || { echo "##[error]Container did not reach DB init - see logs above"; exit 1; }
+          docker stop "$CID" >/dev/null
+          docker rm "$CID" >/dev/null
