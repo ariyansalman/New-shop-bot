@@ -61,6 +61,9 @@ class User(Base):
     username = Column(String(255))
     wallet_balance = Column(Money, default=Decimal("0.00"), nullable=False)
     is_banned = Column(Boolean, default=False, nullable=False)
+    # ISO 639-1 code; see utils/i18n.py's SUPPORTED_LANGS. Not DB-constrained
+    # to that tuple - adding a language is a code change, not a migration.
+    language = Column(String(10), default='en', nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (

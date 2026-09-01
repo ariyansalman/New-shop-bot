@@ -9,7 +9,7 @@ from utils import (
     create_pagination_keyboard, create_product_detail_keyboard,
     create_support_keyboard, check_user_banned,
     paginate_items, format_product_display, build_availability_text,
-    create_back_support_keyboard
+    create_back_support_keyboard, t, SUPPORTED_LANGS
 )
 
 
@@ -40,6 +40,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             session.commit()
 
         wallet_balance = db_user.wallet_balance
+        lang = db_user.language
 
         # Get store settings
         store_settings = session.query(Settings).first()
@@ -52,11 +53,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_photo(photo=logo)
 
     # Send welcome message with wallet balance
-    message = f"{welcome_msg}\n\n💰 Your Wallet Balance: {format_price(wallet_balance)}"
+    balance_line = t('main_menu.wallet_balance', lang, balance=format_price(wallet_balance))
+    message = f"{welcome_msg}\n\n{balance_line}"
 
     await update.message.reply_text(
         message,
-        reply_markup=create_main_menu_keyboard()
+        reply_markup=create_main_menu_keyboard(lang)
     )
 
 
@@ -82,17 +84,50 @@ async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             session.refresh(db_user)
 
         wallet_balance = db_user.wallet_balance
+        lang = db_user.language
 
         # Get store settings
         store_settings = session.query(Settings).first()
         welcome_msg = store_settings.welcome_message if store_settings else "Welcome to our Digital Products Store!"
 
-    message = f"{welcome_msg}\n\n💰 Your Wallet Balance: {format_price(wallet_balance)}"
+    balance_line = t('main_menu.wallet_balance', lang, balance=format_price(wallet_balance))
+    message = f"{welcome_msg}\n\n{balance_line}"
 
     await query.edit_message_text(
         message,
-        reply_markup=create_main_menu_keyboard()
+        reply_markup=create_main_menu_keyboard(lang)
     )
+
+
+async def set_language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the main-menu language toggle button (callback_data: set_lang_<code>)."""
+    query = update.callback_query
+    user_id = update.effective_user.id
+
+    try:
+        lang = query.data.split("_", 2)[2]
+    except IndexError:
+        lang = None
+    if lang not in SUPPORTED_LANGS:
+        await query.answer("❌ Invalid request.", show_alert=True)
+        return
+
+    with get_db_session() as session:
+        db_user = session.query(User).filter_by(telegram_id=user_id).first()
+        if not db_user:
+            await query.answer("❌ User not found.", show_alert=True)
+            return
+        db_user.language = lang
+
+        wallet_balance = db_user.wallet_balance
+        store_settings = session.query(Settings).first()
+        welcome_msg = store_settings.welcome_message if store_settings else "Welcome to our Digital Products Store!"
+
+    await query.answer(t('language.saved', lang), show_alert=False)
+
+    balance_line = t('main_menu.wallet_balance', lang, balance=format_price(wallet_balance))
+    message = f"{welcome_msg}\n\n{balance_line}"
+    await query.edit_message_text(message, reply_markup=create_main_menu_keyboard(lang))
 
 
 async def products_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):

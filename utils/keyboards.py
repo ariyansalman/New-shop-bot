@@ -3,18 +3,28 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 
-def create_main_menu_keyboard():
-    """Create the main menu keyboard for users."""
+def create_main_menu_keyboard(lang: str = 'en'):
+    """Create the main menu keyboard for users.
+
+    lang picks the button labels (see utils/i18n.py) and which language the
+    language-toggle button offers to switch *to* (its own label is always
+    shown in the *other* language, since that's the one the user needs to
+    recognize to find it).
+    """
+    from .i18n import t
+
+    other_lang = 'bn' if lang != 'bn' else 'en'
     keyboard = [
-        [InlineKeyboardButton("🛒 Products", callback_data="products")],
+        [InlineKeyboardButton(t('main_menu.button.products', lang), callback_data="products")],
         [
-            InlineKeyboardButton("💰 Top Up", callback_data="topup"),
-            InlineKeyboardButton("Order History", callback_data="order_history")
+            InlineKeyboardButton(t('main_menu.button.topup', lang), callback_data="topup"),
+            InlineKeyboardButton(t('main_menu.button.order_history', lang), callback_data="order_history")
         ],
         [
-            InlineKeyboardButton("🧮 Availability", callback_data="availability"),
-            InlineKeyboardButton("☎️ Support", callback_data="support")
-        ]
+            InlineKeyboardButton(t('main_menu.button.availability', lang), callback_data="availability"),
+            InlineKeyboardButton(t('main_menu.button.support', lang), callback_data="support")
+        ],
+        [InlineKeyboardButton(t('main_menu.button.language', lang), callback_data=f"set_lang_{other_lang}")],
     ]
     return InlineKeyboardMarkup(keyboard)
 

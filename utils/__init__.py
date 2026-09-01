@@ -2,6 +2,7 @@
 
 from .money import to_money, money_or_none
 from .audit import log_admin_action
+from .i18n import t, DEFAULT_LANG, SUPPORTED_LANGS
 from .helpers import (
     is_admin, admin_only, get_or_create_user, format_price,
     format_datetime, calculate_expiry_time, paginate_items,
@@ -22,6 +23,7 @@ from .keyboards import (
 
 __all__ = [
     'to_money', 'money_or_none', 'log_admin_action',
+    't', 'DEFAULT_LANG', 'SUPPORTED_LANGS',
     'is_admin', 'admin_only', 'get_or_create_user', 'format_price',
     'format_datetime', 'calculate_expiry_time', 'paginate_items',
     'validate_amount', 'format_product_display',

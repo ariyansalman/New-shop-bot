@@ -12,7 +12,8 @@ from utils import (
     format_price, validate_amount, to_money,
     create_cancel_keyboard, create_payment_method_keyboard,
     create_quantity_keyboard, create_main_menu_keyboard,
-    calculate_expiry_time, notify_admin, check_user_banned
+    calculate_expiry_time, notify_admin, check_user_banned,
+    t, DEFAULT_LANG,
 )
 from config.settings import settings as app_settings
 from services.crypto_bot import CryptoBotService
@@ -27,6 +28,15 @@ PURCHASE_QUANTITY = 10
 
 # Hard ceiling on a single purchase, independent of what the client sends back
 MAX_PURCHASE_QUANTITY = 1000
+
+
+def _get_user_lang(telegram_id: int) -> str:
+    """Look up a user's language preference for a message shown before (or
+    without) an existing get_db_session() block already having the row.
+    """
+    with get_db_session() as session:
+        lang = session.query(User.language).filter_by(telegram_id=telegram_id).scalar()
+    return lang or DEFAULT_LANG
 
 
 async def topup_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -577,9 +587,12 @@ async def buy_product_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
+    telegram_id = update.effective_user.id
+
     # Check if user is banned
-    if check_user_banned(update.effective_user.id):
-        await query.edit_message_text("⛔ You have been banned from using this bot.")
+    if check_user_banned(telegram_id):
+        lang = _get_user_lang(telegram_id)
+        await query.edit_message_text(t('purchase.banned', lang))
         return ConversationHandler.END
 
     # Extract product_id from callback data (format: buy_123)
@@ -590,6 +603,7 @@ async def buy_product_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     with get_db_session() as session:
+        lang = session.query(User.language).filter_by(telegram_id=telegram_id).scalar() or DEFAULT_LANG
         product = session.query(Product).filter_by(id=product_id).first()
 
         if not product:
@@ -618,12 +632,12 @@ async def buy_product_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await show_purchase_confirmation(update, context)
 
         # For key products, ask for quantity
-        message = f"""🛒 Purchase: {product.name}
-
-💰 Price: {format_price(product.price)} each
-📦 Available: {product.stock_count}
-
-💬 Please enter the quantity you want to buy (1-{product.stock_count}):"""
+        message = t(
+            'purchase.quantity_prompt', lang,
+            product_name=product.name,
+            price=format_price(product.price),
+            stock=product.stock_count,
+        )
 
         # If coming from a photo message, delete it and create new text message
         if query.message.photo:
@@ -703,30 +717,30 @@ async def show_purchase_confirmation(update: Update, context: ContextTypes.DEFAU
             return ConversationHandler.END
 
         wallet_balance = user.wallet_balance
+        lang = user.language
         has_sufficient_balance = wallet_balance >= total
 
         if has_sufficient_balance:
-            balance_text = f"💰 Your Wallet Balance: {format_price(wallet_balance)}"
+            balance_text = t('main_menu.wallet_balance', lang, balance=format_price(wallet_balance))
         else:
-            balance_text = f"⚠️ Insufficient Balance!\n💰 Your Wallet Balance: {format_price(wallet_balance)}\n\n💡 Please top up your wallet first."
+            balance_text = t('purchase.insufficient_balance', lang, balance=format_price(wallet_balance))
 
-        message = f"""🛒 Confirm Purchase
-
-📦 Product: {product_name}
-💰 Price: {format_price(product_price)} x {quantity}
-💵 Total: {format_price(total)}
-
-{balance_text}"""
+        title = t(
+            'purchase.confirm_title', lang,
+            product_name=product_name, price=format_price(product_price),
+            quantity=quantity, total=format_price(total),
+        )
+        message = f"{title}\n\n{balance_text}"
 
         if has_sufficient_balance:
             keyboard = [
-                [InlineKeyboardButton("✅ Confirm Purchase", callback_data=f"confirm_purchase_{product_id}_{quantity}")],
-                [InlineKeyboardButton("❌ Cancel", callback_data="cancel_purchase")]
+                [InlineKeyboardButton(t('purchase.button.confirm', lang), callback_data=f"confirm_purchase_{product_id}_{quantity}")],
+                [InlineKeyboardButton(t('purchase.button.cancel', lang), callback_data="cancel_purchase")]
             ]
         else:
             keyboard = [
-                [InlineKeyboardButton("💰 Top Up Wallet", callback_data="topup")],
-                [InlineKeyboardButton("❌ Cancel", callback_data="cancel_purchase")]
+                [InlineKeyboardButton(t('purchase.button.topup_wallet', lang), callback_data="topup")],
+                [InlineKeyboardButton(t('purchase.button.cancel', lang), callback_data="cancel_purchase")]
             ]
 
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -756,7 +770,7 @@ async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     if check_user_banned(update.effective_user.id):
-        await query.edit_message_text("⛔ You have been banned from using this bot.")
+        await query.edit_message_text(t('purchase.banned', _get_user_lang(update.effective_user.id)))
         return
 
     # Extract product_id and quantity from callback data (format: confirm_purchase_123_5)
@@ -867,6 +881,7 @@ async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 'order_id': order.id,
                 'total': total,
                 'details': order_details,
+                'lang': user.language,
             }
     except Exception:
         logger.exception("Purchase failed for user %s", telegram_id)
@@ -879,13 +894,11 @@ async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not result:
         return
 
-    user_message = f"""✅ Purchase Successful!
-
-💰 Total Amount: {format_price(result['total'])}
-📝 Order ID: #{result['order_id']}
-
-{result['details']}
-Thank you for your purchase!"""
+    user_message = t(
+        'purchase.success', result['lang'],
+        total=format_price(result['total']), order_id=result['order_id'],
+        details=result['details'],
+    )
 
     keyboard = [
         [
@@ -913,6 +926,8 @@ async def cancel_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     from utils import create_main_menu_keyboard
 
+    lang = _get_user_lang(update.effective_user.id)
+
     # Clear purchase data
     context.user_data.pop('purchase_product_id', None)
     context.user_data.pop('purchase_product_name', None)
@@ -922,8 +937,8 @@ async def cancel_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop('purchase_quantity', None)
 
     await query.edit_message_text(
-        "❌ Purchase cancelled.",
-        reply_markup=create_main_menu_keyboard()
+        t('purchase.cancelled', lang),
+        reply_markup=create_main_menu_keyboard(lang)
     )
 
     return ConversationHandler.END
