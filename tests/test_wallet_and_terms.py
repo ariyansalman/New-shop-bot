@@ -1,6 +1,6 @@
-"""The Wallet screen and the store's Terms & FAQ.
+"""My Account (formerly the Wallet screen) and the store's Terms & FAQ.
 
-Wallet exists to close one gap: Order History shows orders, not payments,
+The account screen exists to close one gap: Order History shows orders, not payments,
 so a customer who had paid and was waiting on verification had nowhere to
 look. With Binance a top-up can sit in VERIFYING or MANUAL_REVIEW for
 minutes, and every one of those was a support message.
@@ -59,7 +59,7 @@ async def press(handler, data, user_id=TELEGRAM_ID):
 async def test_wallet_shows_the_balance():
     make_user(balance="42.50")
 
-    query = await press(uh.wallet_callback, "wallet")
+    query = await press(uh.account_callback, "account")
 
     assert "$42.50" in query.last_edit_text
 
@@ -69,7 +69,7 @@ async def test_a_payment_being_verified_is_visible():
     user_id = make_user()
     add_txn(user_id, "10.00", TransactionStatus.VERIFYING)
 
-    query = await press(uh.wallet_callback, "wallet")
+    query = await press(uh.account_callback, "account")
 
     assert "In progress" in query.last_edit_text
     assert "checking your payment" in query.last_edit_text
@@ -81,7 +81,7 @@ async def test_a_payment_under_manual_review_says_so():
     user_id = make_user()
     add_txn(user_id, "5.00", TransactionStatus.MANUAL_REVIEW)
 
-    query = await press(uh.wallet_callback, "wallet")
+    query = await press(uh.account_callback, "account")
 
     assert "under review by our team" in query.last_edit_text
 
@@ -91,7 +91,7 @@ async def test_settled_payments_are_listed_separately_from_pending():
     add_txn(user_id, "10.00", TransactionStatus.VERIFYING)
     add_txn(user_id, "50.00", TransactionStatus.COMPLETED, days_ago=2)
 
-    text = (await press(uh.wallet_callback, "wallet")).last_edit_text
+    text = (await press(uh.account_callback, "account")).last_edit_text
 
     assert text.index("In progress") < text.index("Recent top-ups")
     assert text.index("$10.00") < text.index("$50.00")
@@ -100,7 +100,7 @@ async def test_settled_payments_are_listed_separately_from_pending():
 async def test_a_new_customer_sees_an_empty_history_not_a_blank_screen():
     make_user()
 
-    query = await press(uh.wallet_callback, "wallet")
+    query = await press(uh.account_callback, "account")
 
     assert "No top-ups yet" in query.last_edit_text
 
@@ -111,7 +111,7 @@ async def test_the_history_is_capped():
     for i in range(12):
         add_txn(user_id, "1.00", TransactionStatus.COMPLETED, days_ago=i)
 
-    text = (await press(uh.wallet_callback, "wallet")).last_edit_text
+    text = (await press(uh.account_callback, "account")).last_edit_text
 
     assert text.count("added to your balance") == uh._WALLET_HISTORY
 
@@ -119,7 +119,7 @@ async def test_the_history_is_capped():
 async def test_wallet_offers_top_up_and_back():
     make_user()
 
-    query = await press(uh.wallet_callback, "wallet")
+    query = await press(uh.account_callback, "account")
 
     targets = [b.callback_data for row in query.edits[-1][1].inline_keyboard
                for b in row]
@@ -129,9 +129,9 @@ async def test_wallet_offers_top_up_and_back():
 async def test_wallet_is_translated():
     make_user(lang="bn")
 
-    query = await press(uh.wallet_callback, "wallet")
+    query = await press(uh.account_callback, "account")
 
-    assert "ওয়ালেট" in query.last_edit_text
+    assert "আমার অ্যাকাউন্ট" in query.last_edit_text
     assert "ব্যালেন্স" in query.last_edit_text
 
 
@@ -141,7 +141,7 @@ async def test_a_banned_user_gets_nothing():
         session.query(User).filter_by(telegram_id=TELEGRAM_ID).update(
             {"is_banned": True})
 
-    query = await press(uh.wallet_callback, "wallet")
+    query = await press(uh.account_callback, "account")
 
     assert "$25.00" not in query.last_edit_text
 
@@ -156,7 +156,7 @@ async def test_one_customer_never_sees_another_customers_payments():
     add_txn(mine, "10.00", TransactionStatus.COMPLETED)
     add_txn(other_id, "9999.00", TransactionStatus.COMPLETED)
 
-    query = await press(uh.wallet_callback, "wallet")
+    query = await press(uh.account_callback, "account")
 
     assert "$9999.00" not in query.last_edit_text
     assert "$10.00" in query.last_edit_text
@@ -181,14 +181,32 @@ async def test_writing_terms_reveals_the_button():
     assert "terms" in labels
 
 
-async def test_the_terms_screen_shows_what_the_admin_wrote():
+async def test_the_terms_section_offers_both_pages():
+    make_user()
+
+    query = await press(uh.terms_callback, "terms")
+
+    targets = [b.callback_data for row in query.edits[-1][1].inline_keyboard
+               for b in row]
+    assert targets == ["terms_conditions", "terms_faq", "main_menu"]
+
+
+async def test_the_terms_page_shows_what_the_admin_wrote():
     make_user()
     await __import__("asyncio").to_thread(
         store_content.set_terms_sync, "Warranty: 30 days.", 1)
 
-    query = await press(uh.terms_callback, "terms")
+    query = await press(uh.terms_page_callback, "terms_conditions")
 
     assert "Warranty: 30 days." in query.last_edit_text
+
+
+async def test_an_unpublished_page_says_so_rather_than_showing_blank():
+    make_user()
+
+    query = await press(uh.terms_page_callback, "terms_faq")
+
+    assert "Not published yet" in query.last_edit_text
 
 
 async def test_clearing_terms_hides_the_button_again():

@@ -12,7 +12,7 @@ from .helpers import (
     check_user_banned, check_user_banned_async, clear_ban_cache
 )
 from .keyboards import (
-    create_main_menu_keyboard, create_language_keyboard, create_back_support_keyboard,
+    create_main_menu_keyboard, create_language_keyboard, create_terms_menu_keyboard, create_back_support_keyboard,
     create_pagination_keyboard, create_product_detail_keyboard,
     create_quantity_keyboard,
     create_cancel_keyboard, create_payment_method_keyboard,
@@ -35,7 +35,7 @@ __all__ = [
     'create_pagination_keyboard', 'create_product_detail_keyboard',
     'create_quantity_keyboard',
     'format_stock', 'read_image_bytes', 'LOW_STOCK_THRESHOLD',
-    'create_language_keyboard',
+    'create_language_keyboard', 'create_terms_menu_keyboard',
     'create_cancel_keyboard', 'create_payment_method_keyboard',
     'payment_methods_available', 'two_column_rows',
     'create_support_keyboard', 'create_admin_main_menu_keyboard',

@@ -313,6 +313,10 @@ class Settings(Base):
     # store's behalf, so the menu button stays hidden until an admin
     # writes one.
     terms_text = Column(Text, nullable=True)
+    # The FAQ is a separate page from the terms, so it is a separate
+    # column: the Terms & FAQ screen offers one button for each, and a
+    # store may well publish one without the other.
+    faq_text = Column(Text, nullable=True)
 
     # Admin switches for the top-up methods. NULL means no admin has
     # decided, in which case the method's environment variable supplies the

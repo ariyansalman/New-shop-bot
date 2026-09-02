@@ -36,24 +36,35 @@ def read_sync() -> bool:
     """Load the flags from the database. Call from a thread."""
     global _has_terms, _has_referrals
     with get_db_session() as session:
-        row = session.query(StoreSettings.terms_text,
+        row = session.query(StoreSettings.terms_text, StoreSettings.faq_text,
                             StoreSettings.referral_bonus).first()
-        text, bonus = (row if row else (None, None))
-        _has_terms = bool(text and text.strip())
+        terms, faq, bonus = (row if row else (None, None, None))
+        _has_terms = bool((terms or "").strip() or (faq or "").strip())
         _has_referrals = bool(bonus and bonus > 0)
     return _has_terms
 
 
+# The two pages behind Terms & FAQ, and the Settings column each lives in.
+PAGES = {"terms": "terms_text", "faq": "faq_text"}
+
+
+def get_page_sync(page: str):
+    """One page's text, or None."""
+    column = getattr(StoreSettings, PAGES[page])
+    with get_db_session() as session:
+        return session.query(column).scalar()
+
+
 def get_terms_sync():
     """The terms text itself, or None."""
-    with get_db_session() as session:
-        return session.query(StoreSettings.terms_text).scalar()
+    return get_page_sync("terms")
 
 
-def set_terms_sync(text, admin_telegram_id: int) -> bool:
-    """Save the terms and update the cache. Call from a thread.
+def set_page_sync(page: str, text, admin_telegram_id: int) -> bool:
+    """Save one page and update the cache. Call from a thread.
 
-    An empty string clears them, which also hides the button again.
+    An empty string clears it. The menu button follows whether EITHER page
+    has content, so a store can publish just an FAQ.
     """
     global _has_terms
     cleaned = (text or "").strip() or None
@@ -63,15 +74,22 @@ def set_terms_sync(text, admin_telegram_id: int) -> bool:
         if row is None:
             row = StoreSettings()
             session.add(row)
-        row.terms_text = cleaned
+        setattr(row, PAGES[page], cleaned)
         log_admin_action(
             session, admin_telegram_id,
-            "store_terms_set" if cleaned else "store_terms_clear",
+            f"store_{page}_set" if cleaned else f"store_{page}_clear",
             target_type="settings",
         )
         session.commit()
+        _has_terms = any(
+            (getattr(row, column) or "").strip() for column in PAGES.values())
 
-    _has_terms = cleaned is not None
+    return cleaned is not None
+
+
+def set_terms_sync(text, admin_telegram_id: int) -> bool:
+    """Save the terms page. Kept for the existing call sites."""
+    set_page_sync("terms", text, admin_telegram_id)
     return _has_terms
 
 

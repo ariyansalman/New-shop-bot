@@ -3,19 +3,25 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 
-def create_main_menu_keyboard(lang: str = 'en', has_terms: bool = None,
-                              has_referrals: bool = None):
-    """Create the main menu keyboard for users.
+def create_main_menu_keyboard(lang: str = 'en', is_admin_user: bool = False,
+                              has_terms: bool = None, has_referrals: bool = None):
+    """The user main menu.
 
-    lang picks the button labels (see utils/i18n.py). The language button
-    opens the picker rather than toggling: with ten languages there is no
-    single "other one" to offer.
+    Two full-width entries lead - Products and Search, the two ways in - and
+    the six recurring destinations pair up in the same two-column grid the
+    admin panel uses. Terms, Language and the admin entry stay full width
+    below them: they are read-once or rarely-used, and putting them at half
+    width beside a shopping action invites a mis-tap.
 
-    Products leads on its own row - it is why anyone opened the bot. The
-    rest pair up in the same two-column grid the admin panel uses, and
-    Refer & Earn and Terms join them only when the store has switched them
-    on - a bonus of zero, or terms nobody wrote, would be a button leading
-    to nothing.
+    is_admin_user is passed in rather than looked up here, because this is
+    called from a dozen handlers that already know who they are answering.
+    The Admin Panel button is hidden for everyone else; admin_menu_callback
+    refuses non-admins as well, so hiding it is presentation, not the
+    permission check.
+
+    has_terms and has_referrals default to the cached store flags (see
+    services/store_content.py) so the eleven existing call sites need not
+    pass them; tests override them directly.
     """
     from .i18n import t
 
@@ -26,27 +32,50 @@ def create_main_menu_keyboard(lang: str = 'en', has_terms: bool = None,
         from services import store_content
         has_referrals = store_content.has_referrals()
 
-    middle = [
-        InlineKeyboardButton(t('main_menu.button.wallet', lang), callback_data="wallet"),
-        InlineKeyboardButton(t('main_menu.button.order_history', lang), callback_data="order_history"),
+    keyboard = [
+        [InlineKeyboardButton(t('main_menu.button.products', lang),
+                              callback_data="products")],
+        [InlineKeyboardButton(t('main_menu.button.search', lang),
+                              callback_data="search")],
+    ]
+
+    paired = [
         InlineKeyboardButton(t('main_menu.button.topup', lang), callback_data="topup"),
-        InlineKeyboardButton(t('main_menu.button.availability', lang), callback_data="availability"),
-        InlineKeyboardButton(t('main_menu.button.support', lang), callback_data="support"),
+        InlineKeyboardButton(t('main_menu.button.order_history', lang),
+                             callback_data="order_history"),
     ]
     if has_referrals:
-        middle.append(
-            InlineKeyboardButton(t('main_menu.button.referral', lang),
-                                 callback_data="referral"))
-    if has_terms:
-        middle.append(
-            InlineKeyboardButton(t('main_menu.button.terms', lang), callback_data="terms"))
+        paired.append(InlineKeyboardButton(t('main_menu.button.referral', lang),
+                                           callback_data="referral"))
+    paired += [
+        InlineKeyboardButton(t('main_menu.button.account', lang), callback_data="account"),
+        InlineKeyboardButton(t('main_menu.button.availability', lang),
+                             callback_data="availability"),
+        InlineKeyboardButton(t('main_menu.button.support', lang), callback_data="support"),
+    ]
+    keyboard += two_column_rows(paired)
 
-    keyboard = [[InlineKeyboardButton(t('main_menu.button.products', lang),
-                                      callback_data="products")]]
-    keyboard += two_column_rows(middle)
+    if has_terms:
+        keyboard.append([InlineKeyboardButton(t('main_menu.button.terms', lang),
+                                              callback_data="terms")])
     keyboard.append([InlineKeyboardButton(t('main_menu.button.language', lang),
                                           callback_data="language")])
+    if is_admin_user:
+        keyboard.append([InlineKeyboardButton(t('main_menu.button.admin', lang),
+                                              callback_data="admin_menu")])
     return InlineKeyboardMarkup(keyboard)
+
+
+def create_terms_menu_keyboard(lang: str = 'en'):
+    """Terms & FAQ: one button per page, then Back."""
+    from .i18n import t
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(t('terms.button.conditions', lang),
+                              callback_data="terms_conditions")],
+        [InlineKeyboardButton(t('terms.button.faq', lang), callback_data="terms_faq")],
+        [InlineKeyboardButton(t('common.back_arrow', lang), callback_data="main_menu")],
+    ])
 
 
 def create_language_keyboard():
@@ -268,7 +297,8 @@ def create_admin_settings_menu_keyboard():
         InlineKeyboardButton("🖼 Store Logo", callback_data="admin_store_logo"),
         InlineKeyboardButton("📞 Support Username", callback_data="admin_support_username"),
         InlineKeyboardButton("📢 Channel Username", callback_data="admin_channel_username"),
-        InlineKeyboardButton("📜 Terms & FAQ", callback_data="admin_terms"),
+        InlineKeyboardButton("📜 Terms", callback_data="admin_terms"),
+        InlineKeyboardButton("❓ FAQ", callback_data="admin_faq"),
         InlineKeyboardButton("👥 Refer & Earn", callback_data="admin_referral"),
     ], "🔙 Back", "admin_menu")
 

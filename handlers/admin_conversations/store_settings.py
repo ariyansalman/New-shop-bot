@@ -240,8 +240,20 @@ async def referral_bonus_value(update: Update, context: ContextTypes.DEFAULT_TYP
 _MAX_TERMS = 3500
 
 
+# Which page an admin is editing, and how each is described.
+_PAGES = {
+    "admin_terms": ("terms", "📜 Terms & Conditions",
+                    "Your refund policy, warranty period and delivery times. "
+                    "Stating the rules up front is what stops most disputes "
+                    "becoming arguments."),
+    "admin_faq": ("faq", "❓ Frequently Asked Questions",
+                  "The questions support answers over and over: how delivery "
+                  "works, what to do if a key fails, how long a top-up takes."),
+}
+
+
 async def config_terms(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start the Terms & FAQ flow."""
+    """Edit one of the two pages behind Terms & FAQ."""
     query = update.callback_query
 
     if not is_admin(update.effective_user.id):
@@ -250,17 +262,16 @@ async def config_terms(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.answer()
 
+    page, heading, blurb = _PAGES.get(query.data, _PAGES["admin_terms"])
+    context.user_data['terms_page'] = page
+
     from services import store_content
-    current = await asyncio.to_thread(store_content.get_terms_sync)
+    current = await asyncio.to_thread(store_content.get_page_sync, page)
 
     from utils import create_cancel_keyboard
     await query.edit_message_text(
-        "📜 Terms & FAQ\n\n"
-        "Shown to customers from the main menu. Use it for your refund "
-        "policy, warranty period, delivery times, and what makes a dispute "
-        "valid - stating the rules up front is what stops most disputes "
-        "becoming arguments.\n\n"
-        f"Current:\n{current or '(not set - the button is hidden)'}\n\n"
+        f"{heading}\n\n{blurb}\n\n"
+        f"Current:\n{current or '(not set)'}\n\n"
         "Send the new text, or 'clear' to remove it:",
         reply_markup=create_cancel_keyboard()
     )
@@ -286,12 +297,16 @@ async def terms_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text.lower() == 'clear':
         text = ""
 
-    now_visible = await asyncio.to_thread(store_content.set_terms_sync, text, admin_id)
+    page = context.user_data.get('terms_page', 'terms')
+    saved = await asyncio.to_thread(store_content.set_page_sync, page, text, admin_id)
+    label = "FAQ" if page == "faq" else "Terms & Conditions"
 
     await update.message.reply_text(
-        ("✅ Terms & FAQ updated. Customers can now see it from the main menu."
-         if now_visible else
-         "✅ Terms & FAQ cleared. The menu button is hidden again."),
+        (f"✅ {label} updated. Customers can read it under Terms & FAQ."
+         if saved else
+         f"✅ {label} cleared."
+         + ("" if store_content.has_terms()
+            else " The menu button is hidden again.")),
         reply_markup=create_admin_settings_menu_keyboard()
     )
 

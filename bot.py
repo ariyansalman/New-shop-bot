@@ -353,7 +353,7 @@ def build_application(post_init=None):
 
     # Terms & FAQ configuration conversation
     config_terms_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(admin_conversations.config_terms, pattern="^admin_terms$")],
+        entry_points=[CallbackQueryHandler(admin_conversations.config_terms, pattern="^admin_(terms|faq)$")],
         states={
             admin_conversations.TERMS_TEXT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, admin_conversations.terms_value)],
@@ -479,8 +479,31 @@ def build_application(post_init=None):
 
     # Register callback query handlers
     application.add_handler(CallbackQueryHandler(user_handlers.main_menu_callback, pattern="^main_menu$"))
+    search_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(user_handlers.search_start, pattern="^search$")],
+        states={
+            user_handlers.SEARCH_QUERY: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, user_handlers.search_results),
+                CallbackQueryHandler(user_handlers.search_cancel, pattern="^main_menu$"),
+            ],
+        },
+        fallbacks=[
+            MessageHandler(filters.COMMAND, user_handlers.search_cancel),
+            CallbackQueryHandler(user_handlers.search_cancel, pattern="^main_menu$"),
+        ],
+        per_user=True,
+        per_chat=True,
+        allow_reentry=True,
+    )
+    application.add_handler(search_conv)
+
     application.add_handler(CallbackQueryHandler(user_handlers.referral_callback, pattern="^referral$"))
-    application.add_handler(CallbackQueryHandler(user_handlers.wallet_callback, pattern="^wallet$"))
+    # "wallet" is the callback this screen shipped with; it stays routed so
+    # a message already on someone's phone still works after the rename.
+    application.add_handler(CallbackQueryHandler(
+        user_handlers.account_callback, pattern="^(account|wallet)$"))
+    application.add_handler(CallbackQueryHandler(
+        user_handlers.terms_page_callback, pattern="^terms_(conditions|faq)$"))
     application.add_handler(CallbackQueryHandler(user_handlers.terms_callback, pattern="^terms$"))
     application.add_handler(CallbackQueryHandler(user_handlers.language_callback, pattern="^language$"))
     application.add_handler(CallbackQueryHandler(user_handlers.set_language_callback, pattern="^set_lang_"))

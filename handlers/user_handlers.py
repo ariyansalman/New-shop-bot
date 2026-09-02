@@ -15,7 +15,7 @@ network round trip rather than a local file read.
 import asyncio
 from urllib.parse import quote
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes
+from telegram.ext import ContextTypes, ConversationHandler
 from config.settings import settings as app_settings
 from services import referrals
 from database import (
@@ -29,7 +29,7 @@ from utils import (
     create_support_keyboard, check_user_banned_async,
     paginate_items, format_product_display, build_availability_text,
     create_back_support_keyboard, t, SUPPORTED_LANGS, DEFAULT_LANG,
-    create_language_keyboard,
+    create_language_keyboard, create_terms_menu_keyboard, is_admin,
     format_stock, read_image_bytes,
 )
 
@@ -96,7 +96,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         message,
-        reply_markup=create_main_menu_keyboard(lang)
+        reply_markup=create_main_menu_keyboard(lang, is_admin_user=is_admin(telegram_id))
     )
 
 
@@ -137,7 +137,7 @@ async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     await query.edit_message_text(
         message,
-        reply_markup=create_main_menu_keyboard(lang)
+        reply_markup=create_main_menu_keyboard(lang, is_admin_user=is_admin(user_id))
     )
 
 
@@ -175,8 +175,8 @@ _METHOD_LABEL = {
 }
 
 
-async def wallet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Balance, payments still in flight, and recent top-ups.
+async def account_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """My Account: balance, payments still in flight, and recent top-ups.
 
     The gap this closes: a customer who has paid and is waiting had nowhere
     to look. Order History shows orders, not payments, so a Binance top-up
@@ -214,7 +214,7 @@ async def wallet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     balance, lang, transactions = result
 
-    lines = [t('wallet.title', lang),
+    lines = [t('main_menu.button.account', lang),
              "━━━━━━━━━━━━━━━━━━━━━━━━", "",
              t('wallet.balance', lang, balance=format_price(balance)), ""]
 
@@ -310,29 +310,132 @@ def referral_link(code):
 
 
 async def terms_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """The store's own rules, as the admin wrote them."""
+    """The Terms & FAQ section: one button per page."""
     query = update.callback_query
     await query.answer()
+
+    lang = await _get_user_language(update.effective_user.id)
+
+    await query.edit_message_text(
+        f"{t('terms.menu_title', lang)}\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━",
+        reply_markup=create_terms_menu_keyboard(lang))
+
+
+async def terms_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """One page of the section (callback_data: terms_conditions | terms_faq)."""
+    query = update.callback_query
+    await query.answer()
+
+    is_faq = query.data == "terms_faq"
 
     def _sync():
         with get_db_session() as session:
             store = session.query(Settings).first()
             lang = session.query(User.language).filter_by(
                 telegram_id=update.effective_user.id).scalar()
-            return (store.terms_text if store else None), lang or DEFAULT_LANG
+            if store is None:
+                body = None
+            else:
+                body = store.faq_text if is_faq else store.terms_text
+            return body, lang or DEFAULT_LANG
 
-    terms, lang = await asyncio.to_thread(_sync)
+    body, lang = await asyncio.to_thread(_sync)
 
-    # The button is hidden when there are no terms, so this only happens on
-    # a stale keyboard - answer it rather than showing an empty screen.
-    text = terms or t('wallet.empty', lang)
+    heading = t('terms.button.faq', lang) if is_faq else t('terms.button.conditions', lang)
 
     await query.edit_message_text(
-        f"{t('main_menu.button.terms', lang)}\n"
+        f"{heading}\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"{text}",
+        f"{body or t('terms.not_published', lang)}",
         reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton(t('common.back', lang), callback_data="main_menu")]]))
+            InlineKeyboardButton(t('common.back_arrow', lang),
+                                 callback_data="terms")]]))
+
+
+# Conversation state for the search flow.
+SEARCH_QUERY = 30
+
+# Short queries match nearly everything, which is not a search result.
+_MIN_QUERY = 2
+_MAX_RESULTS = 10
+
+
+async def search_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ask for something to search for."""
+    query = update.callback_query
+    await query.answer()
+
+    if await check_user_banned_async(update.effective_user.id):
+        await query.edit_message_text(t('purchase.banned'))
+        return ConversationHandler.END
+
+    lang = await _get_user_language(update.effective_user.id)
+
+    await query.edit_message_text(
+        t('search.prompt', lang),
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton(t('common.back_arrow', lang),
+                                 callback_data="main_menu")]]))
+    return SEARCH_QUERY
+
+
+async def search_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show what matched, as the same product buttons the catalogue uses."""
+    text = (update.message.text or "").strip()
+    user_id = update.effective_user.id
+
+    lang = await _get_user_language(user_id)
+
+    if len(text) < _MIN_QUERY:
+        await update.message.reply_text(
+            t('search.prompt', lang),
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(t('common.back_arrow', lang),
+                                     callback_data="main_menu")]]))
+        return SEARCH_QUERY
+
+    def _sync():
+        with get_db_session() as session:
+            # ilike so the match is case-insensitive on PostgreSQL and
+            # SQLite alike. Escape the wildcards a customer can type, or
+            # "%" alone would list the whole catalogue.
+            needle = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            rows = (session.query(Product)
+                    .filter(Product.is_active.is_(True),
+                            Product.name.ilike(f"%{needle}%", escape="\\"))
+                    .order_by(Product.name)
+                    .limit(_MAX_RESULTS)
+                    .all())
+            return [(p.id, p.name, p.price, p.stock_count) for p in rows]
+
+    found = await asyncio.to_thread(_sync)
+
+    if not found:
+        await update.message.reply_text(
+            t('search.none', lang, query=text),
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(t('common.back_arrow', lang),
+                                     callback_data="main_menu")]]))
+        return ConversationHandler.END
+
+    keyboard = [
+        [InlineKeyboardButton(f"{name} · {format_price(price)} · {format_stock(stock)}",
+                              callback_data=f"product_{product_id}")]
+        for product_id, name, price, stock in found
+    ]
+    keyboard.append([InlineKeyboardButton(t('common.back_arrow', lang),
+                                          callback_data="main_menu")])
+
+    await update.message.reply_text(
+        t('search.results', lang, query=text),
+        reply_markup=InlineKeyboardMarkup(keyboard))
+    return ConversationHandler.END
+
+
+async def search_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Leave the search flow without searching."""
+    return ConversationHandler.END
 
 
 async def language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -399,7 +502,7 @@ async def set_language_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     balance_line = t('main_menu.wallet_balance', lang, balance=format_price(wallet_balance))
     message = f"{welcome_msg}\n\n{balance_line}"
-    await query.edit_message_text(message, reply_markup=create_main_menu_keyboard(lang))
+    await query.edit_message_text(message, reply_markup=create_main_menu_keyboard(lang, is_admin_user=is_admin(user_id)))
 
 
 async def products_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
