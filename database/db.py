@@ -153,6 +153,9 @@ _MIGRATION_PROBES = [
     ("d3f6b18c4a27", lambda i: "binance_pay_enabled" in _column_names(i, "settings")),
     # e1a4c7b83f52: per-product delivery instructions
     ("e1a4c7b83f52", lambda i: "delivery_instructions" in _column_names(i, "products")),
+    # f2b9d61c8a74: settings.binance_pay_enabled made nullable
+    ("f2b9d61c8a74", lambda i: bool(
+        (_column(i, "settings", "binance_pay_enabled") or {}).get("nullable"))),
 ]
 
 # The revision an unstamped database is at when none of the probes pass.

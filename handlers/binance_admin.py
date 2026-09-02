@@ -3,7 +3,7 @@
 Two screens, both reachable from the existing admin menu and both gated by
 the existing is_admin() check:
 
-  * Settings   - configuration status, the kill switch, a connectivity test
+  * Settings   - configuration status, the on/off switch, a connectivity test
   * Monitoring - Binance transactions filtered by status, with a manual
                  re-verify and a way to close out a stuck one
 
@@ -26,6 +26,8 @@ from datetime import datetime
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
+
+from sqlalchemy import func
 
 from database import get_db_session, Transaction, TransactionStatus, PaymentMethod
 from config.settings import settings
@@ -71,19 +73,36 @@ def _mask(value: str) -> str:
     return f"✅ set (…{value[-4:]})"
 
 
+def _missing_credentials() -> list:
+    """Which environment values are missing, for a message an admin can act on.
+
+    "not configured" alone leaves the admin guessing which of four variables
+    it means.
+    """
+    missing = []
+    if not settings.BINANCE_PAY_ID:
+        missing.append("BINANCE_PAY_ID")
+    if not settings.BINANCE_TEST_MODE:
+        if not settings.BINANCE_API_KEY:
+            missing.append("BINANCE_API_KEY")
+        if not settings.BINANCE_API_SECRET:
+            missing.append("BINANCE_API_SECRET")
+    return missing
+
+
 # ======================================================================
 # Settings screen
 # ======================================================================
 
 def _settings_text() -> str:
-    if not settings.BINANCE_PAY_ENABLED:
-        state = "⚪️ disabled (BINANCE_PAY_ENABLED is off)"
-    elif not bp.binance_configured():
-        state = "🔴 unusable (configuration incomplete)"
-    elif not bp.binance_pay_available():
-        state = "🟠 switched off by an admin"
+    if not bp.binance_configured():
+        state = "🔴 unusable - missing " + ", ".join(_missing_credentials())
+    elif bp.binance_pay_available():
+        state = "🟢 live - customers can pay with Binance"
+    elif bp._admin_toggle is None:
+        state = "⚪️ off by default (BINANCE_PAY_ENABLED is not set)"
     else:
-        state = "🟢 live"
+        state = "🟠 switched off by an admin"
 
     lines = [
         "🟡 BINANCE PAY SETTINGS",
@@ -116,7 +135,9 @@ def _settings_text() -> str:
         "",
         "Credentials are set in the server",
         "environment and are never editable",
-        "or shown in Telegram.",
+        "or shown in Telegram. The switch",
+        "below is the live on/off and takes",
+        "effect immediately.",
         "",
         "━━━━━━━━━━━━━━━━━━━━━━━━",
     ]
@@ -128,7 +149,7 @@ def _settings_keyboard():
               else "🟢 Enable Binance Pay")
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🧪 Test Config", callback_data="binadmin_test"),
-         InlineKeyboardButton("📊 Monitoring", callback_data="binadmin_mon_review_0")],
+         InlineKeyboardButton("📊 Monitoring", callback_data="binadmin_mon_pending_0")],
         # The switch keeps a row to itself: it is the one button here that
         # changes what customers can do, and it should not be a half-width
         # neighbour of something harmless.
@@ -147,20 +168,28 @@ async def binance_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         await query.edit_message_text(_settings_text(), reply_markup=_settings_keyboard())
     except Exception:
-        pass  # identical content already on screen
+        # Usually "message is not modified" - the same screen is already up.
+        # Logged rather than swallowed so a real edit failure is findable.
+        logger.debug("Binance settings screen not re-rendered", exc_info=True)
 
 
 async def binance_admin_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Flip the admin kill switch."""
+    """Turn Binance top-ups on or off.
+
+    Note the single query.answer() per path. Telegram accepts one answer
+    per callback and silently drops the rest, so answering up front and
+    then answering again with an alert means the admin sees nothing at all
+    happen - which is exactly how this button used to fail.
+    """
     query = update.callback_query
     if await _deny(update):
         return
-    await query.answer()
 
     if not bp.binance_configured():
+        missing = ", ".join(_missing_credentials())
         await query.answer(
-            "Binance is not configured on the server - set the environment "
-            "variables first.", show_alert=True)
+            f"Cannot enable: the server is missing {missing}. "
+            "Set it in the environment and redeploy.", show_alert=True)
         return
 
     new_value = not bp.binance_pay_available()
@@ -168,10 +197,12 @@ async def binance_admin_toggle(update: Update, context: ContextTypes.DEFAULT_TYP
     try:
         await asyncio.to_thread(bp._write_admin_toggle_sync, new_value, admin_id)
     except Exception:
-        logger.exception("Could not persist the Binance kill switch")
+        logger.exception("Could not persist the Binance switch")
         await query.answer("Could not save that. Check the logs.", show_alert=True)
         return
 
+    await query.answer("Binance Pay is now ON" if new_value
+                       else "Binance Pay is now OFF")
     await query.edit_message_text(_settings_text(), reply_markup=_settings_keyboard())
 
 
@@ -180,13 +211,14 @@ async def binance_admin_test(update: Update, context: ContextTypes.DEFAULT_TYPE)
     query = update.callback_query
     if await _deny(update):
         return
-    await query.answer()
 
     if not bp.binance_configured():
-        await query.answer("Nothing to test - Binance is not configured.",
+        missing = ", ".join(_missing_credentials())
+        await query.answer(f"Nothing to test - the server is missing {missing}.",
                            show_alert=True)
         return
 
+    await query.answer()
     await query.edit_message_text("🧪 Testing Binance configuration…")
 
     service = get_service()
@@ -218,10 +250,28 @@ async def binance_admin_test(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # Monitoring screen
 # ======================================================================
 
-def _filter_keyboard(active_key: str):
+def _status_counts_sync() -> dict:
+    """How many Binance transactions sit in each status.
+
+    One grouped query, so the filter row can carry counts. Without them an
+    admin has to open all six filters to find where anything is, and the
+    default screen reads as broken whenever its own queue is empty.
+    """
+    with get_db_session() as session:
+        rows = (session.query(Transaction.status, func.count(Transaction.id))
+                .filter(Transaction.payment_method == PaymentMethod.BINANCE_PAY)
+                .group_by(Transaction.status)
+                .all())
+    return {status: count for status, count in rows}
+
+
+def _filter_keyboard(active_key: str, counts: dict):
     rows, row = [], []
-    for key, label, _status in _FILTERS:
-        text = f"• {label} •" if key == active_key else label
+    for key, label, status in _FILTERS:
+        count = counts.get(status, 0)
+        text = f"{label} ({count})" if count else label
+        if key == active_key:
+            text = f"• {text} •"
         row.append(InlineKeyboardButton(text, callback_data=f"binadmin_mon_{key}_0"))
         if len(row) == 2:
             rows.append(row)
@@ -243,12 +293,13 @@ async def binance_admin_monitor(update: Update, context: ContextTypes.DEFAULT_TY
     try:
         key, page = parts[2], int(parts[3])
     except (IndexError, ValueError):
-        key, page = "review", 0
+        key, page = "pending", 0
     if key not in _FILTER_BY_KEY:
-        key = "review"
+        key = "pending"
     label, status = _FILTER_BY_KEY[key]
 
     def _sync():
+        counts = _status_counts_sync()
         with get_db_session() as session:
             q = session.query(Transaction).filter(
                 Transaction.payment_method == PaymentMethod.BINANCE_PAY,
@@ -257,7 +308,7 @@ async def binance_admin_monitor(update: Update, context: ContextTypes.DEFAULT_TY
 
             total = q.count()
             rows = q.offset(page * _PAGE_SIZE).limit(_PAGE_SIZE).all()
-            return total, [
+            return counts, total, [
                 {
                     'id': t.id,
                     'telegram_id': t.user.telegram_id if t.user else None,
@@ -270,7 +321,7 @@ async def binance_admin_monitor(update: Update, context: ContextTypes.DEFAULT_TY
                 for t in rows
             ]
 
-    total, rows = await asyncio.to_thread(_sync)
+    counts, total, rows = await asyncio.to_thread(_sync)
 
     lines = [f"📊 BINANCE PAYMENTS - {label}",
              "━━━━━━━━━━━━━━━━━━━━━━━━", ""]
@@ -290,7 +341,7 @@ async def binance_admin_monitor(update: Update, context: ContextTypes.DEFAULT_TY
             lines.append("")
     lines += [f"Total: {total}", "━━━━━━━━━━━━━━━━━━━━━━━━"]
 
-    keyboard = _filter_keyboard(key)
+    keyboard = _filter_keyboard(key, counts)
 
     # A re-verify button only for the states where verifying again can
     # still change the outcome. Re-running it on a COMPLETED row would do
@@ -326,7 +377,7 @@ async def binance_admin_monitor(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text("\n".join(lines),
                                       reply_markup=InlineKeyboardMarkup(keyboard))
     except Exception:
-        pass
+        logger.debug("Binance monitoring screen not re-rendered", exc_info=True)
 
 
 async def binance_admin_retry(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -338,13 +389,14 @@ async def binance_admin_retry(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     if await _deny(update):
         return
-    await query.answer()
 
     try:
         transaction_id = int(query.data.split("_")[2])
     except (IndexError, ValueError):
         await query.answer("Invalid request.", show_alert=True)
         return
+
+    await query.answer()
 
     await query.edit_message_text(f"🔄 Re-verifying #{transaction_id}…")
 
@@ -415,7 +467,7 @@ async def binance_admin_retry(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"Result for #{transaction_id}:\n\n{user_text}",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("📊 Payment Monitoring",
-                                  callback_data="binadmin_mon_review_0")],
+                                  callback_data="binadmin_mon_pending_0")],
             [InlineKeyboardButton("🔙 Back", callback_data="binadmin_menu")],
         ]))
 
@@ -430,13 +482,14 @@ async def binance_admin_close(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     if await _deny(update):
         return
-    await query.answer()
 
     try:
         transaction_id = int(query.data.split("_")[2])
     except (IndexError, ValueError):
         await query.answer("Invalid request.", show_alert=True)
         return
+
+    await query.answer()
 
     def _sync():
         with get_db_session() as session:
@@ -464,6 +517,6 @@ async def binance_admin_close(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([
         [InlineKeyboardButton("📊 Payment Monitoring",
-                              callback_data="binadmin_mon_review_0")],
+                              callback_data="binadmin_mon_pending_0")],
         [InlineKeyboardButton("🔙 Back", callback_data="binadmin_menu")],
     ]))

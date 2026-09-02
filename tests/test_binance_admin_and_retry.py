@@ -291,13 +291,70 @@ async def test_toggle_persists_and_hides_the_method_from_users():
 
 
 async def test_toggle_cannot_enable_an_unconfigured_server(monkeypatch):
+    """No Telegram button can supply credentials the server does not have."""
     monkeypatch.setattr(settings, "BINANCE_PAY_ID", "", raising=False)
     update, query = admin_update("binadmin_toggle")
 
     await ba.binance_admin_toggle(update, FakeContext())
 
     assert bp.binance_pay_available() is False
-    assert "not configured" in query.last_answer[0]
+    # Naming the missing variable, not just "not configured".
+    assert "BINANCE_PAY_ID" in query.last_answer[0]
+
+
+async def test_toggle_enables_when_the_env_default_is_off(monkeypatch):
+    """The button that never worked.
+
+    BINANCE_PAY_ENABLED off plus credentials present used to make
+    binance_configured() false, so the toggle refused - and refused through
+    a second query.answer() that Telegram drops, so nothing happened at all.
+    """
+    monkeypatch.setattr(settings, "BINANCE_PAY_ENABLED", False, raising=False)
+    monkeypatch.setattr(bp, "_admin_toggle", None, raising=False)
+    assert bp.binance_pay_available() is False
+
+    update, query = admin_update("binadmin_toggle")
+    await ba.binance_admin_toggle(update, FakeContext())
+
+    assert bp.binance_pay_available() is True
+    with get_db_session() as session:
+        assert session.query(StoreSettings).first().binance_pay_enabled is True
+
+
+async def test_the_admin_choice_outlives_the_env_default(monkeypatch):
+    """Once an admin decides, BINANCE_PAY_ENABLED stops deciding."""
+    monkeypatch.setattr(settings, "BINANCE_PAY_ENABLED", True, raising=False)
+    monkeypatch.setattr(bp, "_admin_toggle", None, raising=False)
+    assert bp.binance_pay_available() is True
+
+    update, _query = admin_update("binadmin_toggle")
+    await ba.binance_admin_toggle(update, FakeContext())        # admin turns it off
+
+    assert bp.binance_pay_available() is False
+    assert bp.refresh_admin_toggle() is False                    # and it survives a reboot
+    assert bp.binance_pay_available() is False
+
+
+async def test_untouched_switch_follows_the_environment(monkeypatch):
+    monkeypatch.setattr(bp, "_admin_toggle", None, raising=False)
+
+    monkeypatch.setattr(settings, "BINANCE_PAY_ENABLED", True, raising=False)
+    assert bp.binance_pay_available() is True
+
+    monkeypatch.setattr(settings, "BINANCE_PAY_ENABLED", False, raising=False)
+    assert bp.binance_pay_available() is False
+
+
+async def test_toggle_answers_the_callback_exactly_once(monkeypatch):
+    """Telegram drops every answer after the first, so an alert sent as a
+    second answer is invisible - which is how this button failed silently."""
+    monkeypatch.setattr(settings, "BINANCE_PAY_ID", "", raising=False)
+    update, query = admin_update("binadmin_toggle")
+
+    await ba.binance_admin_toggle(update, FakeContext())
+
+    assert len(query.answers) == 1
+    assert query.answers[0][1].get("show_alert") is True
 
 
 async def test_refresh_admin_toggle_reloads_the_saved_value():
@@ -366,7 +423,25 @@ async def test_monitoring_survives_an_unknown_filter():
 
     await ba.binance_admin_monitor(update, FakeContext())
 
-    assert "Manual Review" in query.last_edit_text     # falls back, no crash
+    assert "Pending" in query.last_edit_text           # falls back, no crash
+
+
+async def test_filter_buttons_carry_their_counts():
+    """Without counts an admin must open all six filters to find anything,
+    and the default screen reads as broken whenever its queue is empty."""
+    user_id = make_user()
+    make_txn(user_id, provider_txn_id="A", status=TransactionStatus.MANUAL_REVIEW)
+    make_txn(user_id, provider_txn_id="B", status=TransactionStatus.MANUAL_REVIEW)
+    make_txn(user_id, provider_txn_id="C", status=TransactionStatus.PENDING)
+
+    update, query = admin_update("binadmin_mon_pending_0")
+    await ba.binance_admin_monitor(update, FakeContext())
+
+    labels = [b.text for row in query.edits[-1][1].inline_keyboard for b in row]
+    assert any("Manual Review (2)" in text for text in labels)
+    assert any("Pending (1)" in text for text in labels)
+    # A status with nothing in it stays uncluttered.
+    assert any(text.strip("• ") == "⌛ Expired" for text in labels)
 
 
 # ----------------------------------------------------------------------

@@ -18,7 +18,7 @@ from sqlalchemy import create_engine, inspect
 import database.db as db
 
 
-HEAD = "e1a4c7b83f52"
+HEAD = "f2b9d61c8a74"
 
 # The shape of a real pre-Alembic deployment: no alembic_version, no
 # users.language, no transactions.provider*, no settings.binance_pay_enabled,
@@ -113,7 +113,9 @@ def test_legacy_migration_keeps_the_existing_data(boot):
         row = conn.execute(
             "SELECT welcome_message, binance_pay_enabled FROM settings").fetchone()
         assert row[0] == "existing store"     # the store's own text survives
-        assert row[1] == 1                    # new column defaults to enabled
+        # NULL, not True: "no admin has decided", so BINANCE_PAY_ENABLED
+        # still supplies the answer on a store that has never used the switch.
+        assert row[1] is None
     finally:
         conn.close()
 

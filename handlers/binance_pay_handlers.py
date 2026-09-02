@@ -63,15 +63,26 @@ _RETRY_BATCH_SIZE = 10
 # blocking-IO pattern the rest of this codebase moves into threads. The
 # flag lives in one process, is written only by the admin toggle below,
 # and is loaded once at startup, so a plain module global is enough.
-_admin_toggle = True
+# None means "no admin has decided", in which case BINANCE_PAY_ENABLED
+# supplies the answer. Once an admin uses the switch, their choice wins:
+# the environment variable is the starting position, not a veto that the
+# panel can never overcome.
+_admin_toggle = None
 
 
-def _read_admin_toggle_sync() -> bool:
-    """Load the kill switch from the database. Call from a thread."""
+def _switch_is_on() -> bool:
+    """The live on/off state: the admin's choice, else the environment."""
+    if _admin_toggle is None:
+        return settings.BINANCE_PAY_ENABLED
+    return _admin_toggle
+
+
+def _read_admin_toggle_sync():
+    """Load the switch from the database. Call from a thread."""
     global _admin_toggle
     with get_db_session() as session:
         row = session.query(StoreSettings.binance_pay_enabled).first()
-        _admin_toggle = True if row is None else bool(row[0])
+        _admin_toggle = None if row is None or row[0] is None else bool(row[0])
     return _admin_toggle
 
 
@@ -103,18 +114,22 @@ def refresh_admin_toggle() -> bool:
         # database at boot. Fail open to the environment configuration:
         # this switch exists to disable a working method, not to be a
         # second thing that can silently break a working one.
-        logger.warning("Could not load the Binance kill switch - using the "
-                       "environment configuration only", exc_info=True)
+        logger.warning("Could not load the Binance switch - falling back to "
+                       "BINANCE_PAY_ENABLED", exc_info=True)
         return _admin_toggle
 
 
 def binance_configured() -> bool:
-    """Whether the environment could verify a Binance payment at all.
+    """Whether the server holds credentials that could verify a payment.
 
-    Separate from binance_pay_available() so the admin panel can tell
-    "no credentials" apart from "an admin switched it off".
+    Deliberately does NOT consider BINANCE_PAY_ENABLED. That variable says
+    whether the method should be offered; this says whether it *could* be.
+    Folding the two together is what made the admin panel's Enable button
+    impossible to use: the panel refused to switch anything on while the
+    environment variable was off, and the environment variable is not
+    something the panel can change.
     """
-    if not settings.BINANCE_PAY_ENABLED or not settings.BINANCE_PAY_ID:
+    if not settings.BINANCE_PAY_ID:
         return False
     if settings.BINANCE_TEST_MODE:
         return True
@@ -127,7 +142,7 @@ def binance_pay_available() -> bool:
     Hidden unless it is switched on AND actually usable, so a user can
     never reach a checkout whose payment could never be verified.
     """
-    return binance_configured() and _admin_toggle
+    return binance_configured() and _switch_is_on()
 
 
 def _remaining_time(expires_at) -> str:
