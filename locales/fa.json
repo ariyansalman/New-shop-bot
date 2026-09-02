@@ -1,0 +1,21 @@
+{
+  "main_menu.wallet_balance": "💰 موجودی کیف پول شما: {balance}",
+  "main_menu.button.products": "🛒 محصولات",
+  "main_menu.button.wallet": "💰 کیف پول",
+  "main_menu.button.topup": "💳 افزایش موجودی",
+  "main_menu.button.order_history": "📋 تاریخچه سفارش‌ها",
+  "main_menu.button.support": "💬 پشتیبانی",
+  "main_menu.button.availability": "📦 موجودی انبار",
+  "main_menu.button.language": "🌐 زبان",
+  "purchase.quantity_prompt": "🛒 خرید: {product_name}\n\n💰 قیمت: {price} هر عدد\n📦 موجود: {stock}\n\n💬 تعداد مورد نظر خود را وارد کنید (1-{stock}):",
+  "purchase.confirm_title": "🛒 تأیید خرید\n\n📦 محصول: {product_name}\n💰 قیمت: {price} × {quantity}\n💵 مجموع: {total}",
+  "purchase.insufficient_balance": "⚠️ موجودی کافی نیست!\n💰 موجودی کیف پول شما: {balance}\n\n💡 لطفاً ابتدا کیف پول خود را شارژ کنید.",
+  "purchase.success": "✅ خرید با موفقیت انجام شد!\n\n💰 مبلغ کل: {total}\n📝 شناسه سفارش: #{order_id}\n\n{details}\nاز خرید شما سپاسگزاریم!",
+  "purchase.cancelled": "❌ خرید لغو شد.",
+  "purchase.button.confirm": "✅ تأیید خرید",
+  "purchase.button.cancel": "❌ لغو",
+  "purchase.button.topup_wallet": "💰 شارژ کیف پول",
+  "purchase.banned": "⛔ شما از استفاده از این ربات مسدود شده‌اید.",
+  "language.prompt": "🌐 زبانی را که می‌خواهید استفاده کنید انتخاب کنید.",
+  "language.saved": "✅ زبان روی فارسی تنظیم شد."
+}

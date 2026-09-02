@@ -445,6 +445,7 @@ def build_application(post_init=None):
 
     # Register callback query handlers
     application.add_handler(CallbackQueryHandler(user_handlers.main_menu_callback, pattern="^main_menu$"))
+    application.add_handler(CallbackQueryHandler(user_handlers.language_callback, pattern="^language$"))
     application.add_handler(CallbackQueryHandler(user_handlers.set_language_callback, pattern="^set_lang_"))
     application.add_handler(CallbackQueryHandler(user_handlers.main_menu_callback, pattern="^back$"))  # Back button goes to main menu
     application.add_handler(CallbackQueryHandler(user_handlers.back_to_products_callback, pattern="^back_to_products$"))

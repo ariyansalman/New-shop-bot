@@ -21,7 +21,8 @@ from utils import (
     create_pagination_keyboard, create_product_detail_keyboard,
     create_support_keyboard, check_user_banned_async,
     paginate_items, format_product_display, build_availability_text,
-    create_back_support_keyboard, t, SUPPORTED_LANGS,
+    create_back_support_keyboard, t, SUPPORTED_LANGS, DEFAULT_LANG,
+    create_language_keyboard,
     format_stock, read_image_bytes,
 )
 
@@ -121,8 +122,37 @@ async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
 
 
+async def language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show the language picker (callback_data: language)."""
+    query = update.callback_query
+    await query.answer()
+
+    if await check_user_banned_async(update.effective_user.id):
+        await query.edit_message_text(t('purchase.banned'))
+        return
+
+    lang = await _get_user_language(update.effective_user.id)
+
+    await query.edit_message_text(t('language.prompt', lang),
+                                  reply_markup=create_language_keyboard())
+
+
+async def _get_user_language(telegram_id: int) -> str:
+    """The user's saved language, or the default."""
+    def _sync():
+        with get_db_session() as session:
+            return session.query(User.language).filter_by(
+                telegram_id=telegram_id).scalar()
+
+    return await asyncio.to_thread(_sync) or DEFAULT_LANG
+
+
 async def set_language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle the main-menu language toggle button (callback_data: set_lang_<code>)."""
+    """Apply a choice from the picker (callback_data: set_lang_<code>).
+
+    The code can contain a hyphen (pt-BR, zh-CN), which is why this splits
+    on "_" at most twice rather than taking the last segment.
+    """
     query = update.callback_query
     user_id = update.effective_user.id
 

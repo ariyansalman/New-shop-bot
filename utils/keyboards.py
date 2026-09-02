@@ -6,14 +6,12 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 def create_main_menu_keyboard(lang: str = 'en'):
     """Create the main menu keyboard for users.
 
-    lang picks the button labels (see utils/i18n.py) and which language the
-    language-toggle button offers to switch *to* (its own label is always
-    shown in the *other* language, since that's the one the user needs to
-    recognize to find it).
+    lang picks the button labels (see utils/i18n.py). The language button
+    opens the picker rather than toggling: with ten languages there is no
+    single "other one" to offer.
     """
     from .i18n import t
 
-    other_lang = 'bn' if lang != 'bn' else 'en'
     keyboard = [
         [InlineKeyboardButton(t('main_menu.button.products', lang), callback_data="products")],
         [
@@ -24,8 +22,26 @@ def create_main_menu_keyboard(lang: str = 'en'):
             InlineKeyboardButton(t('main_menu.button.availability', lang), callback_data="availability"),
             InlineKeyboardButton(t('main_menu.button.support', lang), callback_data="support")
         ],
-        [InlineKeyboardButton(t('main_menu.button.language', lang), callback_data=f"set_lang_{other_lang}")],
+        [InlineKeyboardButton(t('main_menu.button.language', lang), callback_data="language")],
     ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def create_language_keyboard():
+    """The language picker: two per row, then Back.
+
+    Every entry is written in its own language and carries its flag, so
+    someone who cannot read the current interface can still find theirs -
+    which is the whole point of this screen.
+    """
+    from .languages import LANGUAGES, button_label
+
+    keyboard = two_column_rows([
+        InlineKeyboardButton(button_label(language),
+                             callback_data=f"set_lang_{language.code}")
+        for language in LANGUAGES
+    ])
+    keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="main_menu")])
     return InlineKeyboardMarkup(keyboard)
 
 

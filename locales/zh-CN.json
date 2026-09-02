@@ -1,0 +1,21 @@
+{
+  "main_menu.wallet_balance": "💰 您的钱包余额：{balance}",
+  "main_menu.button.products": "🛒 商品",
+  "main_menu.button.wallet": "💰 钱包",
+  "main_menu.button.topup": "💳 充值",
+  "main_menu.button.order_history": "📋 订单记录",
+  "main_menu.button.support": "💬 客服",
+  "main_menu.button.availability": "📦 库存",
+  "main_menu.button.language": "🌐 语言",
+  "purchase.quantity_prompt": "🛒 购买：{product_name}\n\n💰 单价：{price}\n📦 库存：{stock}\n\n💬 请输入您要购买的数量（1-{stock}）：",
+  "purchase.confirm_title": "🛒 确认购买\n\n📦 商品：{product_name}\n💰 单价：{price} x {quantity}\n💵 合计：{total}",
+  "purchase.insufficient_balance": "⚠️ 余额不足！\n💰 您的钱包余额：{balance}\n\n💡 请先为钱包充值。",
+  "purchase.success": "✅ 购买成功！\n\n💰 总金额：{total}\n📝 订单号：#{order_id}\n\n{details}\n感谢您的购买！",
+  "purchase.cancelled": "❌ 购买已取消。",
+  "purchase.button.confirm": "✅ 确认购买",
+  "purchase.button.cancel": "❌ 取消",
+  "purchase.button.topup_wallet": "💰 为钱包充值",
+  "purchase.banned": "⛔ 您已被禁止使用此机器人。",
+  "language.prompt": "🌐 请选择您要使用的语言。",
+  "language.saved": "✅ 语言已设置为简体中文。"
+}

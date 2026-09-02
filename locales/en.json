@@ -1,0 +1,21 @@
+{
+  "main_menu.wallet_balance": "💰 Your Wallet Balance: {balance}",
+  "main_menu.button.products": "🛒 Products",
+  "main_menu.button.wallet": "💰 Wallet",
+  "main_menu.button.topup": "💳 Top Up",
+  "main_menu.button.order_history": "📋 Order History",
+  "main_menu.button.support": "💬 Support",
+  "main_menu.button.availability": "📦 Availability",
+  "main_menu.button.language": "🌐 Language",
+  "purchase.quantity_prompt": "🛒 Purchase: {product_name}\n\n💰 Price: {price} each\n📦 Available: {stock}\n\n💬 Please enter the quantity you want to buy (1-{stock}):",
+  "purchase.confirm_title": "🛒 Confirm Purchase\n\n📦 Product: {product_name}\n💰 Price: {price} x {quantity}\n💵 Total: {total}",
+  "purchase.insufficient_balance": "⚠️ Insufficient Balance!\n💰 Your Wallet Balance: {balance}\n\n💡 Please top up your wallet first.",
+  "purchase.success": "✅ Purchase Successful!\n\n💰 Total Amount: {total}\n📝 Order ID: #{order_id}\n\n{details}\nThank you for your purchase!",
+  "purchase.cancelled": "❌ Purchase cancelled.",
+  "purchase.button.confirm": "✅ Confirm Purchase",
+  "purchase.button.cancel": "❌ Cancel",
+  "purchase.button.topup_wallet": "💰 Top Up Wallet",
+  "purchase.banned": "⛔ You have been banned from using this bot.",
+  "language.prompt": "🌐 Choose the language you want to use.",
+  "language.saved": "✅ Language set to English."
+}

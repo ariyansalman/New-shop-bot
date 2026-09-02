@@ -1,0 +1,21 @@
+{
+  "main_menu.wallet_balance": "💰 আপনার ওয়ালেট ব্যালেন্স: {balance}",
+  "main_menu.button.products": "🛒 প্রোডাক্ট",
+  "main_menu.button.wallet": "💰 ওয়ালেট",
+  "main_menu.button.topup": "💳 টপ আপ",
+  "main_menu.button.order_history": "📋 অর্ডার হিস্টরি",
+  "main_menu.button.support": "💬 সাপোর্ট",
+  "main_menu.button.availability": "📦 স্টক দেখুন",
+  "main_menu.button.language": "🌐 ভাষা",
+  "purchase.quantity_prompt": "🛒 কিনুন: {product_name}\n\n💰 দাম: {price} প্রতিটি\n📦 স্টকে আছে: {stock}\n\n💬 কত পরিমাণ কিনতে চান লিখুন (১-{stock}):",
+  "purchase.confirm_title": "🛒 কেনাকাটা নিশ্চিত করুন\n\n📦 প্রোডাক্ট: {product_name}\n💰 দাম: {price} x {quantity}\n💵 মোট: {total}",
+  "purchase.insufficient_balance": "⚠️ পর্যাপ্ত ব্যালেন্স নেই!\n💰 আপনার ওয়ালেট ব্যালেন্স: {balance}\n\n💡 আগে ওয়ালেটে টাকা যোগ করুন।",
+  "purchase.success": "✅ কেনাকাটা সফল হয়েছে!\n\n💰 মোট: {total}\n📝 অর্ডার আইডি: #{order_id}\n\n{details}\nধন্যবাদ!",
+  "purchase.cancelled": "❌ কেনাকাটা বাতিল হয়েছে।",
+  "purchase.button.confirm": "✅ কেনাকাটা নিশ্চিত করুন",
+  "purchase.button.cancel": "❌ বাতিল",
+  "purchase.button.topup_wallet": "💰 ওয়ালেটে টাকা যোগ করুন",
+  "purchase.banned": "⛔ এই বটে আপনাকে ব্যান করা হয়েছে।",
+  "language.prompt": "🌐 আপনি যে ভাষা ব্যবহার করতে চান বেছে নিন।",
+  "language.saved": "✅ ভাষা বাংলা করা হয়েছে।"
+}

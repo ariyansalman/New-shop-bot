@@ -1,123 +1,78 @@
-"""Minimal i18n: a flat key -> {lang: template} dict and a t() lookup.
+"""Translations: one JSON file per language in locales/, and a t() lookup.
 
 Scope, deliberately: this translates the highest-traffic user-facing
-surface - the main menu and the purchase flow - not the whole bot. The
-admin panel stays English (the admin already reads English; it's their own
-store). Extending coverage means adding more keys here and swapping the
-matching f-strings in handlers for t() calls; nothing about the mechanism
-itself is Bengali-specific or purchase-flow-specific.
+surface - the main menu, the language picker and the purchase flow - not
+the whole bot. The admin panel stays English (the admin already reads
+English; it's their own store). Extending coverage means adding keys to
+locales/en.json and swapping the matching f-strings in handlers for t()
+calls; nothing about the mechanism is specific to any one language.
 
-Usage: `t('main_menu.title', lang, name=user.username)` - lang falls back
-to 'en' if the key or the language itself isn't found, so a missing
-translation degrades to English rather than raising or showing a raw key.
+The strings live in locales/*.json rather than in this file because ten
+languages inline would be unreadable, and because a translator can then
+work on one file without touching Python. Which languages exist, and how
+they are named and ordered in the picker, is utils/languages.py.
+
+Usage: `t('main_menu.wallet_balance', lang, balance=...)`. A missing key,
+a missing language, or a template whose placeholders do not match the
+arguments given all fall back to English rather than raising - a broken
+translation must never be what stops a customer buying something.
 """
 
-DEFAULT_LANG = 'en'
-SUPPORTED_LANGS = ('en', 'bn')
+import json
+import logging
+import os
 
-_TRANSLATIONS = {
-    'main_menu.wallet_balance': {
-        'en': "💰 Your Wallet Balance: {balance}",
-        'bn': "💰 আপনার ওয়ালেট ব্যালেন্স: {balance}",
-    },
-    'main_menu.button.products': {
-        'en': "🛒 Products",
-        'bn': "🛒 প্রোডাক্ট",
-    },
-    'main_menu.button.wallet': {
-        'en': "💰 Wallet",
-        'bn': "💰 ওয়ালেট",
-    },
-    'main_menu.button.topup': {
-        'en': "💳 Top Up",
-        'bn': "💳 টপ আপ",
-    },
-    'main_menu.button.order_history': {
-        'en': "📋 Order History",
-        'bn': "📋 অর্ডার হিস্টরি",
-    },
-    'main_menu.button.support': {
-        'en': "💬 Support",
-        'bn': "💬 সাপোর্ট",
-    },
-    'main_menu.button.availability': {
-        'en': "📦 Availability",
-        'bn': "📦 স্টক দেখুন",
-    },
-    'main_menu.button.language': {
-        'en': "🌐 বাংলা",  # shown to an English-reading user as the offer to switch
-        'bn': "🌐 English",  # shown to a Bengali-reading user as the offer to switch
-    },
-    'purchase.quantity_prompt': {
-        'en': "🛒 Purchase: {product_name}\n\n"
-              "💰 Price: {price} each\n"
-              "📦 Available: {stock}\n\n"
-              "💬 Please enter the quantity you want to buy (1-{stock}):",
-        'bn': "🛒 কিনুন: {product_name}\n\n"
-              "💰 দাম: {price} প্রতিটি\n"
-              "📦 স্টকে আছে: {stock}\n\n"
-              "💬 কত পরিমাণ কিনতে চান লিখুন (১-{stock}):",
-    },
-    'purchase.confirm_title': {
-        'en': "🛒 Confirm Purchase\n\n"
-              "📦 Product: {product_name}\n"
-              "💰 Price: {price} x {quantity}\n"
-              "💵 Total: {total}",
-        'bn': "🛒 কেনাকাটা নিশ্চিত করুন\n\n"
-              "📦 প্রোডাক্ট: {product_name}\n"
-              "💰 দাম: {price} x {quantity}\n"
-              "💵 মোট: {total}",
-    },
-    'purchase.insufficient_balance': {
-        'en': "⚠️ Insufficient Balance!\n💰 Your Wallet Balance: {balance}\n\n💡 Please top up your wallet first.",
-        'bn': "⚠️ পর্যাপ্ত ব্যালেন্স নেই!\n💰 আপনার ওয়ালেট ব্যালেন্স: {balance}\n\n💡 আগে ওয়ালেটে টাকা যোগ করুন।",
-    },
-    'purchase.success': {
-        'en': "✅ Purchase Successful!\n\n💰 Total Amount: {total}\n📝 Order ID: #{order_id}\n\n{details}\nThank you for your purchase!",
-        'bn': "✅ কেনাকাটা সফল হয়েছে!\n\n💰 মোট: {total}\n📝 অর্ডার আইডি: #{order_id}\n\n{details}\nধন্যবাদ!",
-    },
-    'purchase.cancelled': {
-        'en': "❌ Purchase cancelled.",
-        'bn': "❌ কেনাকাটা বাতিল হয়েছে।",
-    },
-    'purchase.button.confirm': {
-        'en': "✅ Confirm Purchase",
-        'bn': "✅ কেনাকাটা নিশ্চিত করুন",
-    },
-    'purchase.button.cancel': {
-        'en': "❌ Cancel",
-        'bn': "❌ বাতিল",
-    },
-    'purchase.button.topup_wallet': {
-        'en': "💰 Top Up Wallet",
-        'bn': "💰 ওয়ালেটে টাকা যোগ করুন",
-    },
-    'purchase.banned': {
-        'en': "⛔ You have been banned from using this bot.",
-        'bn': "⛔ এই বটে আপনাকে ব্যান করা হয়েছে।",
-    },
-    'language.prompt': {
-        'en': "🌐 Choose your language:",
-        'bn': "🌐 আপনার ভাষা বেছে নিন:",
-    },
-    'language.saved': {
-        'en': "✅ Language set to English.",
-        'bn': "✅ ভাষা বাংলা করা হয়েছে।",
-    },
-}
+from .languages import LANGUAGES
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_LANG = 'en'
+SUPPORTED_LANGS = tuple(lang.code for lang in LANGUAGES)
+
+_LOCALES_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'locales')
+
+
+def _load() -> dict:
+    """Read every locale file once, at import."""
+    catalogue = {}
+    for code in SUPPORTED_LANGS:
+        path = os.path.join(_LOCALES_DIR, f'{code}.json')
+        try:
+            with open(path, encoding='utf-8') as handle:
+                catalogue[code] = json.load(handle)
+        except (OSError, ValueError):
+            # A language that cannot be read simply falls back to English
+            # everywhere, which is better than refusing to start.
+            logger.exception("Could not load locale %s", code)
+            catalogue[code] = {}
+    return catalogue
+
+
+_TRANSLATIONS = _load()
 
 
 def t(key: str, lang: str = DEFAULT_LANG, **kwargs) -> str:
-    """Look up `key` in `lang`, falling back to English, then to the key
-    itself (so a typo'd/missing key is visible instead of raising).
-    """
-    entry = _TRANSLATIONS.get(key)
-    if entry is None:
-        return key
-    template = entry.get(lang) or entry.get(DEFAULT_LANG) or key
-    if kwargs:
+    """Look up a key in the given language, falling back to English."""
+    template = _TRANSLATIONS.get(lang, {}).get(key)
+    if template is None:
+        template = _TRANSLATIONS.get(DEFAULT_LANG, {}).get(key)
+    if template is None:
+        # An unknown key is a bug, but showing the customer a raw key is a
+        # worse one than showing them nothing.
+        logger.warning("Missing translation key: %s", key)
+        return ""
+
+    if not kwargs:
+        return template
+    try:
+        return template.format(**kwargs)
+    except (KeyError, IndexError):
+        # A translation whose placeholders drifted from the English one.
+        # Fall back rather than raise inside a handler.
+        logger.warning("Bad placeholders in %s/%s", lang, key)
+        fallback = _TRANSLATIONS.get(DEFAULT_LANG, {}).get(key, "")
         try:
-            return template.format(**kwargs)
+            return fallback.format(**kwargs)
         except (KeyError, IndexError):
-            return template
-    return template
+            return fallback

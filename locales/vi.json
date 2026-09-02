@@ -1,0 +1,21 @@
+{
+  "main_menu.wallet_balance": "💰 Số dư ví của bạn: {balance}",
+  "main_menu.button.products": "🛒 Sản phẩm",
+  "main_menu.button.wallet": "💰 Ví",
+  "main_menu.button.topup": "💳 Nạp tiền",
+  "main_menu.button.order_history": "📋 Lịch sử đơn hàng",
+  "main_menu.button.support": "💬 Hỗ trợ",
+  "main_menu.button.availability": "📦 Hàng có sẵn",
+  "main_menu.button.language": "🌐 Ngôn ngữ",
+  "purchase.quantity_prompt": "🛒 Mua: {product_name}\n\n💰 Giá: {price} mỗi sản phẩm\n📦 Còn lại: {stock}\n\n💬 Nhập số lượng bạn muốn mua (1-{stock}):",
+  "purchase.confirm_title": "🛒 Xác nhận mua hàng\n\n📦 Sản phẩm: {product_name}\n💰 Giá: {price} x {quantity}\n💵 Tổng: {total}",
+  "purchase.insufficient_balance": "⚠️ Số dư không đủ!\n💰 Số dư ví của bạn: {balance}\n\n💡 Vui lòng nạp tiền vào ví trước.",
+  "purchase.success": "✅ Mua hàng thành công!\n\n💰 Tổng số tiền: {total}\n📝 Mã đơn hàng: #{order_id}\n\n{details}\nCảm ơn bạn đã mua hàng!",
+  "purchase.cancelled": "❌ Đã hủy mua hàng.",
+  "purchase.button.confirm": "✅ Xác nhận mua",
+  "purchase.button.cancel": "❌ Hủy",
+  "purchase.button.topup_wallet": "💰 Nạp tiền vào ví",
+  "purchase.banned": "⛔ Bạn đã bị cấm sử dụng bot này.",
+  "language.prompt": "🌐 Chọn ngôn ngữ bạn muốn sử dụng.",
+  "language.saved": "✅ Đã đặt ngôn ngữ là Tiếng Việt."
+}

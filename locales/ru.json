@@ -1,0 +1,21 @@
+{
+  "main_menu.wallet_balance": "💰 Баланс вашего кошелька: {balance}",
+  "main_menu.button.products": "🛒 Товары",
+  "main_menu.button.wallet": "💰 Кошелёк",
+  "main_menu.button.topup": "💳 Пополнить",
+  "main_menu.button.order_history": "📋 История заказов",
+  "main_menu.button.support": "💬 Поддержка",
+  "main_menu.button.availability": "📦 Наличие",
+  "main_menu.button.language": "🌐 Язык",
+  "purchase.quantity_prompt": "🛒 Покупка: {product_name}\n\n💰 Цена: {price} за штуку\n📦 В наличии: {stock}\n\n💬 Введите количество, которое хотите купить (1-{stock}):",
+  "purchase.confirm_title": "🛒 Подтвердите покупку\n\n📦 Товар: {product_name}\n💰 Цена: {price} x {quantity}\n💵 Итого: {total}",
+  "purchase.insufficient_balance": "⚠️ Недостаточно средств!\n💰 Баланс вашего кошелька: {balance}\n\n💡 Сначала пополните кошелёк.",
+  "purchase.success": "✅ Покупка совершена!\n\n💰 Итоговая сумма: {total}\n📝 Номер заказа: #{order_id}\n\n{details}\nСпасибо за покупку!",
+  "purchase.cancelled": "❌ Покупка отменена.",
+  "purchase.button.confirm": "✅ Подтвердить покупку",
+  "purchase.button.cancel": "❌ Отмена",
+  "purchase.button.topup_wallet": "💰 Пополнить кошелёк",
+  "purchase.banned": "⛔ Вам заблокирован доступ к этому боту.",
+  "language.prompt": "🌐 Выберите язык, который хотите использовать.",
+  "language.saved": "✅ Выбран русский язык."
+}

@@ -1,0 +1,21 @@
+{
+  "main_menu.wallet_balance": "💰 رصيد محفظتك: {balance}",
+  "main_menu.button.products": "🛒 المنتجات",
+  "main_menu.button.wallet": "💰 المحفظة",
+  "main_menu.button.topup": "💳 شحن الرصيد",
+  "main_menu.button.order_history": "📋 سجل الطلبات",
+  "main_menu.button.support": "💬 الدعم",
+  "main_menu.button.availability": "📦 المتوفر",
+  "main_menu.button.language": "🌐 اللغة",
+  "purchase.quantity_prompt": "🛒 شراء: {product_name}\n\n💰 السعر: {price} للقطعة\n📦 المتوفر: {stock}\n\n💬 أدخل الكمية التي تريد شراءها (1-{stock}):",
+  "purchase.confirm_title": "🛒 تأكيد الشراء\n\n📦 المنتج: {product_name}\n💰 السعر: {price} × {quantity}\n💵 الإجمالي: {total}",
+  "purchase.insufficient_balance": "⚠️ الرصيد غير كافٍ!\n💰 رصيد محفظتك: {balance}\n\n💡 يرجى شحن محفظتك أولاً.",
+  "purchase.success": "✅ تم الشراء بنجاح!\n\n💰 المبلغ الإجمالي: {total}\n📝 رقم الطلب: #{order_id}\n\n{details}\nشكرًا لشرائك!",
+  "purchase.cancelled": "❌ تم إلغاء الشراء.",
+  "purchase.button.confirm": "✅ تأكيد الشراء",
+  "purchase.button.cancel": "❌ إلغاء",
+  "purchase.button.topup_wallet": "💰 شحن المحفظة",
+  "purchase.banned": "⛔ تم حظرك من استخدام هذا البوت.",
+  "language.prompt": "🌐 اختر اللغة التي تريد استخدامها.",
+  "language.saved": "✅ تم ضبط اللغة على العربية."
+}

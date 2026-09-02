@@ -1,0 +1,21 @@
+{
+  "main_menu.wallet_balance": "💰 የኪስ ቦርሳዎ ቀሪ ሒሳብ፦ {balance}",
+  "main_menu.button.products": "🛒 ምርቶች",
+  "main_menu.button.wallet": "💰 ኪስ ቦርሳ",
+  "main_menu.button.topup": "💳 ገንዘብ ጨምር",
+  "main_menu.button.order_history": "📋 የትዕዛዝ ታሪክ",
+  "main_menu.button.support": "💬 ድጋፍ",
+  "main_menu.button.availability": "📦 ያለው ክምችት",
+  "main_menu.button.language": "🌐 ቋንቋ",
+  "purchase.quantity_prompt": "🛒 ግዢ፦ {product_name}\n\n💰 ዋጋ፦ {price} ለአንዱ\n📦 ያለው፦ {stock}\n\n💬 ምን ያህል መግዛት እንደሚፈልጉ ያስገቡ (1-{stock})፦",
+  "purchase.confirm_title": "🛒 ግዢውን ያረጋግጡ\n\n📦 ምርት፦ {product_name}\n💰 ዋጋ፦ {price} x {quantity}\n💵 ጠቅላላ፦ {total}",
+  "purchase.insufficient_balance": "⚠️ በቂ ቀሪ ሒሳብ የለም!\n💰 የኪስ ቦርሳዎ ቀሪ ሒሳብ፦ {balance}\n\n💡 እባክዎ መጀመሪያ ገንዘብ ይጨምሩ።",
+  "purchase.success": "✅ ግዢው ተሳክቷል!\n\n💰 ጠቅላላ መጠን፦ {total}\n📝 የትዕዛዝ መለያ፦ #{order_id}\n\n{details}\nስለገዙልን እናመሰግናለን!",
+  "purchase.cancelled": "❌ ግዢው ተሰርዟል።",
+  "purchase.button.confirm": "✅ ግዢውን አረጋግጥ",
+  "purchase.button.cancel": "❌ ሰርዝ",
+  "purchase.button.topup_wallet": "💰 ኪስ ቦርሳ ሙላ",
+  "purchase.banned": "⛔ ይህን ቦት እንዳይጠቀሙ ታግደዋል።",
+  "language.prompt": "🌐 መጠቀም የሚፈልጉትን ቋንቋ ይምረጡ።",
+  "language.saved": "✅ ቋንቋው ወደ አማርኛ ተቀይሯል።"
+}
