@@ -25,7 +25,7 @@ from database import (
 )
 from utils import (
     is_admin, admin_only, format_price, to_money, log_admin_action,
-    create_admin_main_menu_keyboard, create_admin_product_menu_keyboard,
+    create_admin_product_menu_keyboard,
     create_admin_category_menu_keyboard, create_admin_user_menu_keyboard,
     create_admin_order_menu_keyboard, create_admin_settings_menu_keyboard,
     create_admin_broadcast_menu_keyboard, parse_keys_from_text, clear_ban_cache
@@ -41,28 +41,16 @@ MAX_KEYS_FILE_BYTES = 1024 * 1024
 
 @admin_only
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /admin command - show admin panel."""
+    """Handle /admin command - show the Admin Panel.
+
+    The panel itself lives in handlers/admin_panel.py; this only opens it,
+    so /admin and the main-menu button show the same thing.
+    """
+    from handlers.admin_panel import admin_panel_main_markup
+
     await update.message.reply_text(
-        "🔐 Admin Panel\n\nSelect an option:",
-        reply_markup=create_admin_main_menu_keyboard()
-    )
-
-
-async def admin_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle admin menu callback - return to admin main menu."""
-    query = update.callback_query
-
-    # Authorize before answering: answering twice is rejected by Telegram,
-    # so the "Access denied" alert never reached the user before.
-    if not is_admin(update.effective_user.id):
-        await query.answer("⛔ Access denied.", show_alert=True)
-        return
-
-    await query.answer()
-
-    await query.edit_message_text(
-        "🔐 Admin Panel\n\nSelect an option:",
-        reply_markup=create_admin_main_menu_keyboard()
+        "👑 ADMIN PANEL\n━━━━━━━━━━━━━━━━━━━━",
+        reply_markup=admin_panel_main_markup()
     )
 
 

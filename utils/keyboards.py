@@ -15,9 +15,9 @@ def create_main_menu_keyboard(lang: str = 'en', is_admin_user: bool = False,
 
     is_admin_user is passed in rather than looked up here, because this is
     called from a dozen handlers that already know who they are answering.
-    The Admin Panel button is hidden for everyone else; admin_menu_callback
-    refuses non-admins as well, so hiding it is presentation, not the
-    permission check.
+    The Admin Panel button is hidden for everyone else; the panel's own
+    handler refuses non-admins as well, so hiding it is presentation,
+    not the permission check.
 
     has_terms and has_referrals default to the cached store flags (see
     services/store_content.py) so the eleven existing call sites need not
@@ -232,21 +232,6 @@ def _menu(action_buttons, back_label, back_target):
     keyboard = two_column_rows(action_buttons)
     keyboard.append([InlineKeyboardButton(back_label, callback_data=back_target)])
     return InlineKeyboardMarkup(keyboard)
-
-
-def create_admin_main_menu_keyboard():
-    """Create admin panel main menu keyboard."""
-    return _menu([
-        # Catalogue and people, then money and outreach, then configuration.
-        InlineKeyboardButton("📦 Products", callback_data="admin_products"),
-        InlineKeyboardButton("👥 Users", callback_data="admin_users"),
-        InlineKeyboardButton("🛍 Orders", callback_data="admin_orders"),
-        InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"),
-        InlineKeyboardButton("💳 Payments", callback_data="payadmin_menu"),
-        InlineKeyboardButton("⚙️ Settings", callback_data="admin_settings"),
-        # Odd one out, so it lands on its own full-width row.
-        InlineKeyboardButton("📜 Admin Action Log", callback_data="admin_action_log"),
-    ], "🔙 Exit Admin", "main_menu")
 
 
 def create_admin_product_menu_keyboard():

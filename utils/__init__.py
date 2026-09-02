@@ -17,7 +17,7 @@ from .keyboards import (
     create_quantity_keyboard,
     create_cancel_keyboard, create_payment_method_keyboard,
     payment_methods_available, two_column_rows,
-    create_support_keyboard, create_admin_main_menu_keyboard,
+    create_support_keyboard,
     create_admin_product_menu_keyboard, create_admin_category_menu_keyboard,
     create_admin_user_menu_keyboard, create_admin_order_menu_keyboard,
     create_admin_settings_menu_keyboard, create_admin_broadcast_menu_keyboard
@@ -38,7 +38,7 @@ __all__ = [
     'create_language_keyboard', 'create_terms_menu_keyboard',
     'create_cancel_keyboard', 'create_payment_method_keyboard',
     'payment_methods_available', 'two_column_rows',
-    'create_support_keyboard', 'create_admin_main_menu_keyboard',
+    'create_support_keyboard',
     'create_admin_product_menu_keyboard', 'create_admin_category_menu_keyboard',
     'create_admin_user_menu_keyboard', 'create_admin_order_menu_keyboard',
     'create_admin_settings_menu_keyboard', 'create_admin_broadcast_menu_keyboard'

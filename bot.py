@@ -12,7 +12,7 @@ from config import settings, validate_settings, init_sentry
 from database.init_data import initialize_database
 from handlers import (user_handlers, admin_handlers, payment_handlers,
                       admin_conversations, dispute_handlers, binance_pay_handlers,
-                      binance_admin, payments_admin)
+                      binance_admin, payments_admin, admin_panel)
 from services import payment_methods, store_content
 
 # M""M M"""""""`YM M""""""'YMM M"""""`'"""`YM M""""""'YMM MM""""""""`M M""MMMMM""M 
@@ -529,7 +529,47 @@ def build_application(post_init=None):
     application.add_handler(CallbackQueryHandler(payment_handlers.cancel_payment_page, pattern="^cancel$"))
 
     # Admin callback handlers
-    application.add_handler(CallbackQueryHandler(admin_handlers.admin_menu_callback, pattern="^admin_menu$"))
+    # The Admin Panel: one main menu, sixteen sections. admin_menu keeps
+    # its callback so /admin and every existing "back to admin" button
+    # still land here.
+    application.add_handler(CallbackQueryHandler(
+        admin_panel.admin_panel_menu, pattern="^admin_menu$"))
+    application.add_handler(CallbackQueryHandler(
+        admin_panel.admin_panel_list, pattern="^apanel_(ord|prod|usr)_"))
+    application.add_handler(CallbackQueryHandler(
+        admin_panel.admin_panel_report, pattern="^apanel_rep_"))
+    application.add_handler(CallbackQueryHandler(
+        admin_panel.admin_panel_stats,
+        pattern="^apanel_(ref_stats|ref_top|ref_history|wal_stats|bc_audience)$"))
+
+    wallet_adjust_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(
+            admin_panel.wallet_adjust_start, pattern="^apanel_wal_(add|deduct)$")],
+        states={
+            admin_panel.WALLET_TARGET: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND,
+                               admin_panel.wallet_adjust_target)],
+            admin_panel.WALLET_AMOUNT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND,
+                               admin_panel.wallet_adjust_amount)],
+            admin_panel.WALLET_CONFIRM: [
+                CallbackQueryHandler(admin_panel.wallet_adjust_apply,
+                                     pattern="^apanel_wal_apply$")],
+        },
+        fallbacks=[
+            CallbackQueryHandler(admin_panel.wallet_adjust_cancel,
+                                 pattern="^apanel_wallet$"),
+            MessageHandler(filters.COMMAND, admin_panel.wallet_adjust_cancel),
+        ],
+        per_user=True,
+        per_chat=True,
+        allow_reentry=True,
+    )
+    application.add_handler(wallet_adjust_conv)
+
+    # Section screens last, so the more specific apanel_ patterns above win.
+    application.add_handler(CallbackQueryHandler(
+        admin_panel.admin_panel_section, pattern="^apanel_"))
     application.add_handler(CallbackQueryHandler(admin_handlers.admin_action_log_callback, pattern="^admin_action_log$"))
     application.add_handler(CallbackQueryHandler(admin_handlers.admin_products_callback, pattern="^admin_products$"))
     application.add_handler(CallbackQueryHandler(admin_handlers.admin_restock_keys_callback, pattern="^admin_restock_keys$"))

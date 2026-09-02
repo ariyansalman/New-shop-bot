@@ -12,7 +12,7 @@ from config.settings import settings
 from database import get_db_session, Settings as StoreSettings, AdminActionLog
 from services import payment_methods
 from handlers import payments_admin as pa
-from utils.keyboards import create_admin_main_menu_keyboard
+from handlers.admin_panel import admin_panel_main_markup
 from fakes import FakeUpdate, FakeQuery, FakeContext, set_switch
 
 ADMIN_ID = 700701
@@ -44,7 +44,7 @@ def buttons(query):
 # ------------------------------------------------------------ the button
 
 def test_the_admin_menu_has_one_payments_button():
-    labels = [b.text for row in create_admin_main_menu_keyboard().inline_keyboard
+    labels = [b.text for row in admin_panel_main_markup().inline_keyboard
               for b in row]
     assert "💳 Payments" in labels
     # The old top-level Binance entry is gone - it lives inside the hub now.

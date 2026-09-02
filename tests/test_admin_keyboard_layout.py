@@ -9,9 +9,9 @@ import pytest
 
 from config.settings import settings
 from fakes import set_switch
+from handlers.admin_panel import admin_panel_main_markup
 from utils.keyboards import (
     two_column_rows,
-    create_admin_main_menu_keyboard,
     create_admin_product_menu_keyboard,
     create_admin_category_menu_keyboard,
     create_admin_user_menu_keyboard,
@@ -21,7 +21,6 @@ from utils.keyboards import (
 )
 
 ADMIN_MENUS = [
-    create_admin_main_menu_keyboard,
     create_admin_product_menu_keyboard,
     create_admin_category_menu_keyboard,
     create_admin_user_menu_keyboard,
@@ -62,14 +61,12 @@ def test_every_button_carries_callback_data(build):
             assert button.callback_data, f"{button.text} does nothing"
 
 
-def test_main_menu_layout():
-    assert rows(create_admin_main_menu_keyboard()) == [
-        ["📦 Products", "👥 Users"],
-        ["🛍 Orders", "📢 Broadcast"],
-        ["💳 Payments", "⚙️ Settings"],
-        ["📜 Admin Action Log"],
-        ["🔙 Exit Admin"],
-    ]
+def test_the_panel_main_menu_is_a_two_column_grid():
+    layout = admin_panel_main_markup().inline_keyboard
+
+    assert all(len(row) <= 2 for row in layout)
+    assert layout[-1][0].callback_data == "main_menu"
+    assert layout[-1][0].text == "◀️ Back to Main Menu"
 
 
 def test_category_adds_and_edits_line_up_in_the_same_columns():

@@ -13,7 +13,7 @@ from config.settings import settings
 from database import get_db_session, User, Product, ProductType
 from services import store_content
 from handlers import user_handlers as uh
-from handlers import admin_handlers
+from handlers import admin_panel
 from utils import create_main_menu_keyboard, create_terms_menu_keyboard
 from fakes import (FakeUpdate, FakeQuery, FakeContext, FakeMessage,
                    FakeMessageUpdate)
@@ -93,7 +93,7 @@ async def test_the_admin_handler_refuses_a_normal_user_anyway():
     """Hiding the button is presentation; this is the permission check."""
     query = FakeQuery(data="admin_menu", user_id=USER)
 
-    await admin_handlers.admin_menu_callback(FakeUpdate(query, USER), FakeContext())
+    await admin_panel.admin_panel_menu(FakeUpdate(query, USER), FakeContext())
 
     assert query.answers[0][1].get("show_alert") is True
     assert not query.edits
