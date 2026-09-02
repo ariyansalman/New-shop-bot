@@ -30,5 +30,16 @@
   "wallet.status.failed": "thất bại",
   "wallet.status.expired": "đã hết hạn",
   "wallet.status.manual_review": "đang được đội ngũ xem xét",
-  "common.back": "🔙 Quay lại"
+  "common.back": "🔙 Quay lại",
+  "main_menu.button.referral": "👥 Giới thiệu & Nhận thưởng",
+  "referral.title": "👥 GIỚI THIỆU & NHẬN THƯỞNG",
+  "referral.explain": "Chia sẻ liên kết của bạn. Khi người bạn mời thực hiện đơn hàng đầu tiên, bạn nhận {bonus} vào ví.",
+  "referral.your_link": "🔗 Liên kết của bạn",
+  "referral.invited": "Đã mời: {invited}",
+  "referral.rewarded": "Đã mua: {rewarded}",
+  "referral.earned": "Đã kiếm: {earnings}",
+  "referral.button.share": "📤 Chia sẻ",
+  "referral.share_text": "Tham gia cửa hàng này và nhận sản phẩm số ngay lập tức:",
+  "referral.welcome": "🎉 Bạn được một người bạn mời. Hãy mua hàng lần đầu để họ nhận thưởng.",
+  "referral.earned_notice": "🎉 Người bạn mời vừa mua hàng lần đầu. {bonus} đã được cộng vào ví của bạn."
 }

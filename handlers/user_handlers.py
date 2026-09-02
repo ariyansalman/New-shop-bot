@@ -13,8 +13,11 @@ network round trip rather than a local file read.
 """
 
 import asyncio
+from urllib.parse import quote
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
+from config.settings import settings as app_settings
+from services import referrals
 from database import (
     get_db_session, User, Category, Subcategory, Product, Order, OrderItem,
     Settings, Transaction, ProductType, OrderStatus, DisputeStatus,
@@ -41,6 +44,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await check_user_banned_async(telegram_id):
         await update.message.reply_text("⛔ You have been banned from using this bot.")
         return
+
+    # t.me/<bot>?start=<code> arrives here as context.args. Attribution is
+    # attempted only from this entry point, and referrals.attribute_sync
+    # refuses anyone who is not brand new.
+    referral_code = context.args[0] if getattr(context, "args", None) else None
 
     def _sync():
         # Get or create user and fetch settings in same session
@@ -69,6 +77,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     wallet_balance, lang, welcome_msg, logo_path = await asyncio.to_thread(_sync)
 
+    referred = False
+    if referral_code:
+        referred = await asyncio.to_thread(
+            referrals.attribute_sync, telegram_id, referral_code)
+
     # Send logo if available. Read in a thread: this runs on every /start,
     # and reading it here would stall every other user's handler.
     logo = await read_image_bytes(logo_path)
@@ -78,6 +91,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Send welcome message with wallet balance
     balance_line = t('main_menu.wallet_balance', lang, balance=format_price(wallet_balance))
     message = f"{welcome_msg}\n\n{balance_line}"
+    if referred:
+        message += f"\n\n{t('referral.welcome', lang)}"
 
     await update.message.reply_text(
         message,
@@ -231,6 +246,67 @@ async def wallet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.edit_message_text("\n".join(lines),
                                   reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def referral_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Refer & Earn: the user's link, how many they brought, what they earned."""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+    if await check_user_banned_async(user_id):
+        await query.edit_message_text(t('purchase.banned'))
+        return
+
+    def _sync():
+        # Generating the code first means the screen always has a link to
+        # show, even the very first time it is opened.
+        referrals.ensure_code_sync(user_id)
+        return referrals.stats_sync(user_id)
+
+    stats = await asyncio.to_thread(_sync)
+    if stats is None:
+        await query.edit_message_text("❌ User not found.")
+        return
+
+    lang = stats['language'] or DEFAULT_LANG
+    link = referral_link(stats['code'])
+
+    lines = [t('referral.title', lang),
+             "━━━━━━━━━━━━━━━━━━━━━━━━", "",
+             t('referral.explain', lang, bonus=format_price(stats['bonus'])), ""]
+
+    if link:
+        lines += [t('referral.your_link', lang), link, ""]
+    else:
+        # BOT_USERNAME is what makes a shareable link possible; without it
+        # the code alone is still usable via /start <code>.
+        lines += [f"{t('referral.your_link', lang)}: {stats['code']}", ""]
+
+    lines += [t('referral.invited', lang, invited=stats['invited']),
+              t('referral.rewarded', lang, rewarded=stats['rewarded']),
+              t('referral.earned', lang,
+                earnings=format_price(stats['earnings'])),
+              "", "━━━━━━━━━━━━━━━━━━━━━━━━"]
+
+    keyboard = []
+    if link:
+        share = (f"https://t.me/share/url?url={quote(link)}"
+                 f"&text={quote(t('referral.share_text', lang))}")
+        keyboard.append([InlineKeyboardButton(
+            t('referral.button.share', lang), url=share)])
+    keyboard.append([InlineKeyboardButton(t('common.back', lang),
+                                          callback_data="main_menu")])
+
+    await query.edit_message_text("\n".join(lines),
+                                  reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+def referral_link(code):
+    """The shareable deep link, or None when BOT_USERNAME is not set."""
+    if not code or not app_settings.BOT_USERNAME:
+        return None
+    return f"https://t.me/{app_settings.BOT_USERNAME}?start={code}"
 
 
 async def terms_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):

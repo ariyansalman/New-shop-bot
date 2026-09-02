@@ -30,5 +30,16 @@
   "wallet.status.failed": "विफल",
   "wallet.status.expired": "समय समाप्त",
   "wallet.status.manual_review": "हमारी टीम द्वारा समीक्षा में",
-  "common.back": "🔙 वापस"
+  "common.back": "🔙 वापस",
+  "main_menu.button.referral": "👥 रेफ़र करें और कमाएँ",
+  "referral.title": "👥 रेफ़र करें और कमाएँ",
+  "referral.explain": "अपना लिंक साझा करें। आपके बुलाए व्यक्ति की पहली खरीद पर आपके वॉलेट में {bonus} जुड़ जाएगा।",
+  "referral.your_link": "🔗 आपका लिंक",
+  "referral.invited": "आमंत्रित: {invited}",
+  "referral.rewarded": "खरीदा: {rewarded}",
+  "referral.earned": "कमाई: {earnings}",
+  "referral.button.share": "📤 साझा करें",
+  "referral.share_text": "इस स्टोर से जुड़ें और अपने डिजिटल उत्पाद तुरंत पाएँ:",
+  "referral.welcome": "🎉 आपको एक मित्र ने आमंत्रित किया है। आपकी पहली खरीद पर उन्हें बोनस मिलेगा।",
+  "referral.earned_notice": "🎉 आपके आमंत्रित व्यक्ति ने पहली खरीद कर ली। आपके वॉलेट में {bonus} जोड़ा गया।"
 }

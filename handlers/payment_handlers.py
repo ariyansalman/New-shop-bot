@@ -35,6 +35,7 @@ from utils import (
 )
 from config.settings import settings as app_settings
 from services.crypto_bot import CryptoBotService
+from services import referrals
 
 logger = logging.getLogger(__name__)
 
@@ -997,6 +998,36 @@ async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
 {result['details']}"""
 
     await notify_admin(context, admin_message)
+
+    # Refer & Earn pays out here, after a purchase has actually completed -
+    # the store has taken real money before it gives any away. Safe to call
+    # on every purchase: it is a no-op unless this buyer was referred, the
+    # bonus is configured, and it has not already been paid for them.
+    await _pay_referral_bonus(context, telegram_id)
+
+
+async def _pay_referral_bonus(context, buyer_telegram_id: int):
+    """Credit the referrer, and tell them why their balance moved."""
+    try:
+        paid = await asyncio.to_thread(referrals.pay_bonus_sync, buyer_telegram_id)
+    except Exception:
+        # A referral bonus must never be able to undo a completed purchase,
+        # so this is logged and swallowed rather than raised at the buyer.
+        logger.exception("Referral payout failed for buyer %s", buyer_telegram_id)
+        return
+
+    if not paid:
+        return
+
+    referrer_telegram_id, amount = paid
+    lang = await _get_user_lang_async(referrer_telegram_id)
+    try:
+        await context.bot.send_message(
+            chat_id=referrer_telegram_id,
+            text=t('referral.earned_notice', lang, bonus=format_price(amount)))
+    except Exception:
+        # Blocked the bot, deleted account - the credit already landed.
+        logger.info("Could not notify referrer %s", referrer_telegram_id)
 
 
 async def cancel_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):

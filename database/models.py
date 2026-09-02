@@ -81,6 +81,22 @@ class User(Base):
     # ISO 639-1 code; see utils/i18n.py's SUPPORTED_LANGS. Not DB-constrained
     # to that tuple - adding a language is a code change, not a migration.
     language = Column(String(10), default='en', nullable=False)
+
+    # ---- Refer & Earn ----
+    # The user's own code, handed out as t.me/<bot>?start=<code>. Unique so
+    # a lookup can never resolve to two people; generated lazily, because
+    # most users never open the referral screen.
+    referral_code = Column(String(16), unique=True, nullable=True, index=True)
+    # Who brought this user in. Set once, at signup, from the deep link -
+    # never later, or an existing customer could be claimed retroactively.
+    referred_by_id = Column(Integer, ForeignKey('users.id'), nullable=True, index=True)
+    # When the referrer was paid for THIS user. The single guard against
+    # paying twice: it is set in the same locked transaction as the credit,
+    # so a second completed order finds it already stamped.
+    referral_rewarded_at = Column(DateTime, nullable=True)
+    # Running total the referral screen shows. Derived, but kept here so the
+    # screen does not have to sum the audit trail on the event loop.
+    referral_earnings = Column(Money, default=0, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (
@@ -286,6 +302,11 @@ class Settings(Base):
     store_logo_path = Column(String(500), nullable=True)
     support_username = Column(String(255), nullable=True)
     channel_username = Column(String(255), nullable=True)
+    # Fixed bonus paid to a referrer when the person they brought in
+    # completes their first purchase. Zero disables Refer & Earn entirely,
+    # which is the default: a store must choose to give money away.
+    referral_bonus = Column(Money, default=0, nullable=False)
+
     # The store's own rules, shown to customers under Terms & FAQ: refund
     # policy, warranty period, delivery expectations, what makes a dispute
     # valid. Empty by default - the bot must not invent a policy on the

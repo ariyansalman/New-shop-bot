@@ -30,5 +30,16 @@
   "wallet.status.failed": "ناموفق",
   "wallet.status.expired": "منقضی شده",
   "wallet.status.manual_review": "در حال بررسی توسط تیم ما",
-  "common.back": "🔙 بازگشت"
+  "common.back": "🔙 بازگشت",
+  "main_menu.button.referral": "👥 دعوت کن و درآمد داشته باش",
+  "referral.title": "👥 دعوت و درآمد",
+  "referral.explain": "لینک خود را به اشتراک بگذارید. وقتی فردی که دعوت کرده‌اید اولین خریدش را انجام دهد، {bonus} به کیف پول شما اضافه می‌شود.",
+  "referral.your_link": "🔗 لینک شما",
+  "referral.invited": "دعوت‌شده‌ها: {invited}",
+  "referral.rewarded": "خرید کرده‌اند: {rewarded}",
+  "referral.earned": "درآمد: {earnings}",
+  "referral.button.share": "📤 اشتراک‌گذاری",
+  "referral.share_text": "به این فروشگاه بپیوندید و محصولات دیجیتال خود را فوراً دریافت کنید:",
+  "referral.welcome": "🎉 یک دوست شما را دعوت کرده است. با اولین خرید خود، او پاداش می‌گیرد.",
+  "referral.earned_notice": "🎉 فردی که دعوت کردید اولین خریدش را انجام داد. {bonus} به کیف پول شما اضافه شد."
 }

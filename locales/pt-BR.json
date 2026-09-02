@@ -30,5 +30,16 @@
   "wallet.status.failed": "falhou",
   "wallet.status.expired": "expirado",
   "wallet.status.manual_review": "em análise pela nossa equipe",
-  "common.back": "🔙 Voltar"
+  "common.back": "🔙 Voltar",
+  "main_menu.button.referral": "👥 Indique e Ganhe",
+  "referral.title": "👥 INDIQUE E GANHE",
+  "referral.explain": "Compartilhe seu link. Quando alguém que você convidar fizer a primeira compra, você recebe {bonus} na sua carteira.",
+  "referral.your_link": "🔗 Seu link",
+  "referral.invited": "Convidados: {invited}",
+  "referral.rewarded": "Compraram: {rewarded}",
+  "referral.earned": "Ganhos: {earnings}",
+  "referral.button.share": "📤 Compartilhar",
+  "referral.share_text": "Entre nesta loja e receba seus produtos digitais na hora:",
+  "referral.welcome": "🎉 Você foi convidado por um amigo. Faça sua primeira compra e ele ganha um bônus.",
+  "referral.earned_notice": "🎉 Alguém que você convidou fez a primeira compra. {bonus} foi adicionado à sua carteira."
 }

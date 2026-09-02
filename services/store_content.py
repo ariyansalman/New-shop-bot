@@ -1,4 +1,4 @@
-"""Whether the store has written its own Terms & FAQ.
+"""Which optional main-menu features this store has switched on.
 
 Cached in this process for the same reason the payment switches are: the
 main menu is built on the event loop, by eleven different call sites, and
@@ -15,6 +15,7 @@ from utils.audit import log_admin_action
 logger = logging.getLogger(__name__)
 
 _has_terms = False
+_has_referrals = False
 
 
 def has_terms() -> bool:
@@ -22,12 +23,24 @@ def has_terms() -> bool:
     return _has_terms
 
 
+def has_referrals() -> bool:
+    """Whether to offer Refer & Earn - i.e. whether a bonus is configured.
+
+    A bonus of zero means the store has not chosen to give money away, so
+    the button would lead to a screen promising nothing.
+    """
+    return _has_referrals
+
+
 def read_sync() -> bool:
-    """Load the flag from the database. Call from a thread."""
-    global _has_terms
+    """Load the flags from the database. Call from a thread."""
+    global _has_terms, _has_referrals
     with get_db_session() as session:
-        text = session.query(StoreSettings.terms_text).scalar()
+        row = session.query(StoreSettings.terms_text,
+                            StoreSettings.referral_bonus).first()
+        text, bonus = (row if row else (None, None))
         _has_terms = bool(text and text.strip())
+        _has_referrals = bool(bonus and bonus > 0)
     return _has_terms
 
 
@@ -62,14 +75,20 @@ def set_terms_sync(text, admin_telegram_id: int) -> bool:
     return _has_terms
 
 
+def set_referral_bonus_cache(enabled: bool) -> None:
+    """Keep the cache honest after an admin changes the bonus."""
+    global _has_referrals
+    _has_referrals = enabled
+
+
 def refresh() -> bool:
-    """Load the flag at startup, before any menu is built."""
+    """Load the flags at startup, before any menu is built."""
     try:
         return read_sync()
     except Exception:
         # A settings table that predates the column, or an unreachable
         # database at boot. Hiding the button is the safe direction: it
         # cannot send anyone to an empty page.
-        logger.warning("Could not load the Terms flag - hiding the button",
-                       exc_info=True)
+        logger.warning("Could not load the store content flags - hiding the "
+                       "optional buttons", exc_info=True)
         return _has_terms

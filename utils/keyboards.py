@@ -3,7 +3,8 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 
-def create_main_menu_keyboard(lang: str = 'en', has_terms: bool = None):
+def create_main_menu_keyboard(lang: str = 'en', has_terms: bool = None,
+                              has_referrals: bool = None):
     """Create the main menu keyboard for users.
 
     lang picks the button labels (see utils/i18n.py). The language button
@@ -12,14 +13,18 @@ def create_main_menu_keyboard(lang: str = 'en', has_terms: bool = None):
 
     Products leads on its own row - it is why anyone opened the bot. The
     rest pair up in the same two-column grid the admin panel uses, and
-    Terms joins them only when the store has actually written some: a
-    button leading to an empty page is worse than no button.
+    Refer & Earn and Terms join them only when the store has switched them
+    on - a bonus of zero, or terms nobody wrote, would be a button leading
+    to nothing.
     """
     from .i18n import t
 
     if has_terms is None:
         from services import store_content
         has_terms = store_content.has_terms()
+    if has_referrals is None:
+        from services import store_content
+        has_referrals = store_content.has_referrals()
 
     middle = [
         InlineKeyboardButton(t('main_menu.button.wallet', lang), callback_data="wallet"),
@@ -28,6 +33,10 @@ def create_main_menu_keyboard(lang: str = 'en', has_terms: bool = None):
         InlineKeyboardButton(t('main_menu.button.availability', lang), callback_data="availability"),
         InlineKeyboardButton(t('main_menu.button.support', lang), callback_data="support"),
     ]
+    if has_referrals:
+        middle.append(
+            InlineKeyboardButton(t('main_menu.button.referral', lang),
+                                 callback_data="referral"))
     if has_terms:
         middle.append(
             InlineKeyboardButton(t('main_menu.button.terms', lang), callback_data="terms"))
@@ -260,6 +269,7 @@ def create_admin_settings_menu_keyboard():
         InlineKeyboardButton("📞 Support Username", callback_data="admin_support_username"),
         InlineKeyboardButton("📢 Channel Username", callback_data="admin_channel_username"),
         InlineKeyboardButton("📜 Terms & FAQ", callback_data="admin_terms"),
+        InlineKeyboardButton("👥 Refer & Earn", callback_data="admin_referral"),
     ], "🔙 Back", "admin_menu")
 
 

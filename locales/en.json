@@ -30,5 +30,16 @@
   "wallet.status.failed": "failed",
   "wallet.status.expired": "expired",
   "wallet.status.manual_review": "under review by our team",
-  "common.back": "🔙 Back"
+  "common.back": "🔙 Back",
+  "main_menu.button.referral": "👥 Refer & Earn",
+  "referral.title": "👥 REFER & EARN",
+  "referral.explain": "Share your link. When someone you invite makes their first purchase, you get {bonus} in your wallet.",
+  "referral.your_link": "🔗 Your link",
+  "referral.invited": "Invited: {invited}",
+  "referral.rewarded": "Purchased: {rewarded}",
+  "referral.earned": "Earned: {earnings}",
+  "referral.button.share": "📤 Share",
+  "referral.share_text": "Join this store and get your digital products instantly:",
+  "referral.welcome": "🎉 You were invited by a friend. Make your first purchase and they get a bonus.",
+  "referral.earned_notice": "🎉 Someone you invited just made their first purchase. {bonus} has been added to your wallet."
 }

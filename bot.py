@@ -368,6 +368,23 @@ def build_application(post_init=None):
     )
     application.add_handler(config_terms_conv)
 
+    # Refer & Earn bonus conversation
+    config_referral_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_conversations.config_referral, pattern="^admin_referral$")],
+        states={
+            admin_conversations.REFERRAL_BONUS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_conversations.referral_bonus_value)],
+        },
+        fallbacks=[
+            MessageHandler(filters.COMMAND, admin_conversations.cancel_settings),
+            CallbackQueryHandler(admin_conversations.cancel_settings, pattern="^cancel$")
+        ],
+        per_user=True,
+        per_chat=True,
+        allow_reentry=True,
+    )
+    application.add_handler(config_referral_conv)
+
     # Store logo configuration conversation
     config_logo_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(admin_conversations.config_store_logo, pattern="^admin_store_logo$")],
@@ -462,6 +479,7 @@ def build_application(post_init=None):
 
     # Register callback query handlers
     application.add_handler(CallbackQueryHandler(user_handlers.main_menu_callback, pattern="^main_menu$"))
+    application.add_handler(CallbackQueryHandler(user_handlers.referral_callback, pattern="^referral$"))
     application.add_handler(CallbackQueryHandler(user_handlers.wallet_callback, pattern="^wallet$"))
     application.add_handler(CallbackQueryHandler(user_handlers.terms_callback, pattern="^terms$"))
     application.add_handler(CallbackQueryHandler(user_handlers.language_callback, pattern="^language$"))

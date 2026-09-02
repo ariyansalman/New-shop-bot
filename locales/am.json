@@ -30,5 +30,16 @@
   "wallet.status.failed": "አልተሳካም",
   "wallet.status.expired": "ጊዜው አልፎበታል",
   "wallet.status.manual_review": "በቡድናችን በመገምገም ላይ",
-  "common.back": "🔙 ተመለስ"
+  "common.back": "🔙 ተመለስ",
+  "main_menu.button.referral": "👥 ጋብዝና አግኝ",
+  "referral.title": "👥 ጋብዝና አግኝ",
+  "referral.explain": "አገናኝዎን ያጋሩ። የጋበዙት ሰው የመጀመሪያ ግዢውን ሲፈጽም {bonus} ወደ ኪስ ቦርሳዎ ይገባል።",
+  "referral.your_link": "🔗 የእርስዎ አገናኝ",
+  "referral.invited": "የተጋበዙ፦ {invited}",
+  "referral.rewarded": "የገዙ፦ {rewarded}",
+  "referral.earned": "ያገኙት፦ {earnings}",
+  "referral.button.share": "📤 አጋራ",
+  "referral.share_text": "ወደዚህ መደብር ይቀላቀሉ እና ዲጂታል ምርቶችዎን ወዲያውኑ ያግኙ፦",
+  "referral.welcome": "🎉 በጓደኛዎ ተጋብዘዋል። የመጀመሪያ ግዢዎን ሲፈጽሙ እሱ ጉርሻ ያገኛል።",
+  "referral.earned_notice": "🎉 የጋበዙት ሰው የመጀመሪያ ግዢውን ፈጸመ። {bonus} ወደ ኪስ ቦርሳዎ ተጨምሯል።"
 }

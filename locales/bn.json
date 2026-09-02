@@ -30,5 +30,16 @@
   "wallet.status.failed": "ব্যর্থ হয়েছে",
   "wallet.status.expired": "মেয়াদ শেষ",
   "wallet.status.manual_review": "আমাদের টিম পর্যালোচনা করছে",
-  "common.back": "🔙 ফিরে যান"
+  "common.back": "🔙 ফিরে যান",
+  "main_menu.button.referral": "👥 রেফার করে আয়",
+  "referral.title": "👥 রেফার করে আয়",
+  "referral.explain": "আপনার লিংক শেয়ার করুন। আপনি যাকে আনবেন সে প্রথম কেনাকাটা করলেই আপনার ওয়ালেটে {bonus} যোগ হবে।",
+  "referral.your_link": "🔗 আপনার লিংক",
+  "referral.invited": "আমন্ত্রিত: {invited}",
+  "referral.rewarded": "কিনেছেন: {rewarded}",
+  "referral.earned": "আয় হয়েছে: {earnings}",
+  "referral.button.share": "📤 শেয়ার করুন",
+  "referral.share_text": "এই দোকানে যোগ দিন, ডিজিটাল প্রোডাক্ট সাথে সাথেই পাবেন:",
+  "referral.welcome": "🎉 আপনাকে একজন বন্ধু আমন্ত্রণ জানিয়েছেন। প্রথম কেনাকাটা করলে তিনি বোনাস পাবেন।",
+  "referral.earned_notice": "🎉 আপনার আমন্ত্রিত একজন প্রথম কেনাকাটা করেছেন। আপনার ওয়ালেটে {bonus} যোগ হয়েছে।"
 }

@@ -160,6 +160,8 @@ _MIGRATION_PROBES = [
     ("a3c8e5f10b76", lambda i: "card_pay_enabled" in _column_names(i, "settings")),
     # b6d2f94e15c8: the store's Terms & FAQ text
     ("b6d2f94e15c8", lambda i: "terms_text" in _column_names(i, "settings")),
+    # c7e83a1d4b09: Refer & Earn
+    ("c7e83a1d4b09", lambda i: "referral_code" in _column_names(i, "users")),
 ]
 
 # The revision an unstamped database is at when none of the probes pass.

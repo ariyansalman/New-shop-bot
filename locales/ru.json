@@ -30,5 +30,16 @@
   "wallet.status.failed": "не удалось",
   "wallet.status.expired": "истёк срок",
   "wallet.status.manual_review": "на проверке у нашей команды",
-  "common.back": "🔙 Назад"
+  "common.back": "🔙 Назад",
+  "main_menu.button.referral": "👥 Приглашай и зарабатывай",
+  "referral.title": "👥 ПРИГЛАШАЙ И ЗАРАБАТЫВАЙ",
+  "referral.explain": "Поделитесь своей ссылкой. Когда приглашённый вами сделает первую покупку, вы получите {bonus} на баланс.",
+  "referral.your_link": "🔗 Ваша ссылка",
+  "referral.invited": "Приглашено: {invited}",
+  "referral.rewarded": "Купили: {rewarded}",
+  "referral.earned": "Заработано: {earnings}",
+  "referral.button.share": "📤 Поделиться",
+  "referral.share_text": "Заходите в этот магазин — цифровые товары приходят сразу:",
+  "referral.welcome": "🎉 Вас пригласил друг. Сделайте первую покупку, и он получит бонус.",
+  "referral.earned_notice": "🎉 Приглашённый вами совершил первую покупку. {bonus} зачислено на ваш баланс."
 }

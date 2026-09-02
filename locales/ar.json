@@ -30,5 +30,16 @@
   "wallet.status.failed": "فشل",
   "wallet.status.expired": "منتهي الصلاحية",
   "wallet.status.manual_review": "قيد المراجعة من فريقنا",
-  "common.back": "🔙 رجوع"
+  "common.back": "🔙 رجوع",
+  "main_menu.button.referral": "👥 ادعُ واربح",
+  "referral.title": "👥 ادعُ واربح",
+  "referral.explain": "شارك رابطك. عندما يقوم من تدعوه بأول عملية شراء، تحصل على {bonus} في محفظتك.",
+  "referral.your_link": "🔗 رابطك",
+  "referral.invited": "المدعوون: {invited}",
+  "referral.rewarded": "من اشترى: {rewarded}",
+  "referral.earned": "الأرباح: {earnings}",
+  "referral.button.share": "📤 مشاركة",
+  "referral.share_text": "انضم إلى هذا المتجر واحصل على منتجاتك الرقمية فورًا:",
+  "referral.welcome": "🎉 لقد دعاك صديق. أكمل أول عملية شراء ليحصل على مكافأة.",
+  "referral.earned_notice": "🎉 شخص دعوته أتم أول عملية شراء. تمت إضافة {bonus} إلى محفظتك."
 }

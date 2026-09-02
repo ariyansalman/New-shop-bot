@@ -30,5 +30,16 @@
   "wallet.status.failed": "失败",
   "wallet.status.expired": "已过期",
   "wallet.status.manual_review": "我们的团队正在审核",
-  "common.back": "🔙 返回"
+  "common.back": "🔙 返回",
+  "main_menu.button.referral": "👥 邀请赚钱",
+  "referral.title": "👥 邀请赚钱",
+  "referral.explain": "分享您的链接。您邀请的人完成首次购买后，您将获得 {bonus} 到钱包。",
+  "referral.your_link": "🔗 您的链接",
+  "referral.invited": "已邀请：{invited}",
+  "referral.rewarded": "已购买：{rewarded}",
+  "referral.earned": "已赚取：{earnings}",
+  "referral.button.share": "📤 分享",
+  "referral.share_text": "加入这家商店，数字商品即刻到手：",
+  "referral.welcome": "🎉 您是通过好友邀请加入的。完成首次购买后，他将获得奖励。",
+  "referral.earned_notice": "🎉 您邀请的人完成了首次购买。{bonus} 已添加到您的钱包。"
 }

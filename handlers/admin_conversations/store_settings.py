@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 # Conversation states
 SETTING_VALUE = 0
-WELCOME_MESSAGE, STORE_LOGO, TERMS_TEXT = range(3)
+WELCOME_MESSAGE, STORE_LOGO, TERMS_TEXT, REFERRAL_BONUS = range(4)
 
 
 # ==================== SETTINGS CONFIGURATION ====================
@@ -165,6 +165,67 @@ async def welcome_message_value(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_text(
         f"✅ Welcome message updated successfully!\n\n"
         f"New message:\n{new_message}",
+        reply_markup=create_admin_settings_menu_keyboard()
+    )
+
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
+# ==================== REFER & EARN FLOW ====================
+
+async def config_referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Set the referral bonus. Zero switches Refer & Earn off."""
+    query = update.callback_query
+
+    if not is_admin(update.effective_user.id):
+        await query.answer("⛔ Access denied.", show_alert=True)
+        return ConversationHandler.END
+
+    await query.answer()
+
+    from services import referrals
+    from utils import create_cancel_keyboard, format_price
+    current = await asyncio.to_thread(referrals.bonus_amount_sync)
+
+    state = ("OFF - the menu button is hidden" if current <= 0
+             else f"ON - {format_price(current)} per referral")
+
+    await query.edit_message_text(
+        "👥 Refer & Earn\n\n"
+        f"Currently: {state}\n\n"
+        "The bonus is paid to the referrer when the person they invited "
+        "completes their first purchase - so the store has taken real money "
+        "before it gives any away.\n\n"
+        "Send the amount in USD (for example 1.00), or 0 to switch it off:",
+        reply_markup=create_cancel_keyboard()
+    )
+    return REFERRAL_BONUS
+
+
+async def referral_bonus_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Save the referral bonus."""
+    from services import referrals, store_content
+    from utils import (create_admin_settings_menu_keyboard, create_cancel_keyboard,
+                       money_or_none, format_price)
+
+    amount = money_or_none(update.message.text)
+    if amount is None or amount < 0:
+        await update.message.reply_text(
+            "❌ Please send a number, for example 1.00 (or 0 to switch it off):",
+            reply_markup=create_cancel_keyboard()
+        )
+        return REFERRAL_BONUS
+
+    saved = await asyncio.to_thread(referrals.set_bonus_sync, amount,
+                                    update.effective_user.id)
+    store_content.set_referral_bonus_cache(saved > 0)
+
+    await update.message.reply_text(
+        (f"✅ Refer & Earn is on. Referrers get {format_price(saved)} once the "
+         "person they invited completes their first purchase."
+         if saved > 0 else
+         "✅ Refer & Earn is off. The menu button is hidden."),
         reply_markup=create_admin_settings_menu_keyboard()
     )
 
