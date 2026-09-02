@@ -17,6 +17,12 @@ Base = declarative_base()
 Money = Numeric(12, 2)
 
 
+# File products are not consumed by a sale, so they have no real stock.
+# They carry this sentinel instead of a count, which display code turns
+# into "instant download" rather than showing a customer "999999 in stock".
+UNLIMITED_STOCK = 999_999
+
+
 class ProductType(enum.Enum):
     """Enum for product types."""
     KEY = "key"

@@ -67,10 +67,17 @@ def create_pagination_keyboard(items, page, total_pages, callback_prefix, back_b
     return InlineKeyboardMarkup(keyboard)
 
 
-def create_product_detail_keyboard(product_id, back_callback="back"):
-    """Create keyboard for product details view with Buy Now button."""
+def create_product_detail_keyboard(product_id, back_callback="back", in_stock=True):
+    """Create keyboard for product details view with Buy Now button.
+
+    A sold-out product says so instead of offering Buy Now. The purchase
+    flow already refuses it, but only after the customer has tapped and
+    waited - the button should not promise something the next screen takes
+    away.
+    """
+    buy = ("🛒 Buy Now" if in_stock else "❌ Sold Out")
     keyboard = [
-        [InlineKeyboardButton("🛒 Buy Now", callback_data=f"buy_{product_id}")],
+        [InlineKeyboardButton(buy, callback_data=f"buy_{product_id}")],
         [
             InlineKeyboardButton("🔙 Back", callback_data=back_callback),
             InlineKeyboardButton("☎️ Support", callback_data="support")

@@ -102,14 +102,42 @@ def validate_amount(amount_str: str) -> tuple:
     return True, amount, ""
 
 
+# Below this, say how many are left rather than just "in stock" - it is
+# true information and it is what makes a buyer decide now.
+LOW_STOCK_THRESHOLD = 5
+
+
+def format_stock(stock_count) -> str:
+    """The stock line a customer sees.
+
+    File products carry UNLIMITED_STOCK rather than a real count, so
+    without this the storefront told buyers "In Stock: 999999".
+    """
+    from database import UNLIMITED_STOCK
+
+    count = stock_count or 0
+    if count >= UNLIMITED_STOCK:
+        return "✅ Instant delivery"
+    if count <= 0:
+        return "❌ Sold out"
+    if count <= LOW_STOCK_THRESHOLD:
+        return f"⚠️ Only {count} left"
+    return f"✅ In stock ({count})"
+
+
 def format_product_display(product, include_description=False) -> str:
-    """Format product information for display."""
-    text = f"""📦 Name: {product.name}
-💰 Price: {format_price(product.price)}
-📦 In Stock: {product.stock_count}"""
+    """Format product information for display.
+
+    The name leads as a heading instead of sitting behind a "Name:" label:
+    this is the shopfront, and the customer already knows what they are
+    looking at.
+    """
+    text = (f"📦 {product.name}\n\n"
+            f"💰 {format_price(product.price)}\n"
+            f"{format_stock(product.stock_count)}")
 
     if include_description and product.description:
-        text += f"\n📝 Description: {product.description}"
+        text += f"\n\n📝 {product.description}"
 
     return text
 
@@ -127,15 +155,39 @@ async def notify_admin(context: ContextTypes.DEFAULT_TYPE, message: str):
 
 def build_availability_text(products_by_category) -> str:
     """Build availability page text with products grouped by category."""
-    text = "💬 Our available Products\n\n"
+    text = "📦 AVAILABLE NOW\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
 
     for category_name, products in products_by_category.items():
-        text += f"📦━━━━━{category_name}━━━━━📦\n"
+        text += f"▸ {category_name}\n"
         for product in products:
-            text += f"{product.name} | {format_price(product.price)} | Available: {product.stock_count}\n"
+            text += (f"   {product.name}\n"
+                     f"   {format_price(product.price)} · "
+                     f"{format_stock(product.stock_count)}\n")
         text += "\n"
 
-    return text
+    return text.rstrip() + "\n"
+
+
+async def read_image_bytes(path):
+    """Read an image off the event loop, or None if it is not readable.
+
+    Opening and reading a file blocks, and so does handing an open file to
+    Telegram - the upload streams from it while every other user's handler
+    waits. Reading the bytes in a thread first keeps the loop free, and
+    doing it in one step also removes the exists()-then-open() gap where a
+    redeploy could delete the file in between.
+    """
+    if not path:
+        return None
+
+    def _read():
+        try:
+            with open(path, 'rb') as handle:
+                return handle.read()
+        except OSError:
+            return None
+
+    return await asyncio.to_thread(_read)
 
 
 def parse_keys_from_text(text: str) -> list:

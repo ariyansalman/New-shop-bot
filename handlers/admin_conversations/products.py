@@ -16,7 +16,7 @@ from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 from database import (
-    get_db_session, Category, Subcategory, Product, ProductType
+    get_db_session, Category, Subcategory, Product, ProductType, UNLIMITED_STOCK
 )
 from utils import is_admin, format_price, money_or_none, log_admin_action, create_admin_product_menu_keyboard, two_column_rows
 from config.settings import settings as app_settings
@@ -469,9 +469,9 @@ async def create_product_final(update, context):
             duplicates_dropped = len(raw_keys) - len(product_keys)
             stock_count = len(product_keys)
 
-            # For file products, set stock to 999999 (unlimited)
+            # File products are not consumed by a sale.
             if product_type_value == ProductType.FILE:
-                stock_count = 999999
+                stock_count = UNLIMITED_STOCK
 
             product = Product(
                 name=new_product_name,

@@ -13,7 +13,6 @@ network round trip rather than a local file read.
 """
 
 import asyncio
-import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from database import get_db_session, User, Category, Subcategory, Product, Order, OrderItem, Settings, ProductType, OrderStatus, DisputeStatus
@@ -22,7 +21,8 @@ from utils import (
     create_pagination_keyboard, create_product_detail_keyboard,
     create_support_keyboard, check_user_banned_async,
     paginate_items, format_product_display, build_availability_text,
-    create_back_support_keyboard, t, SUPPORTED_LANGS
+    create_back_support_keyboard, t, SUPPORTED_LANGS,
+    format_stock, read_image_bytes,
 )
 
 
@@ -64,10 +64,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     wallet_balance, lang, welcome_msg, logo_path = await asyncio.to_thread(_sync)
 
-    # Send logo if available
-    if logo_path and os.path.exists(logo_path):
-        with open(logo_path, 'rb') as logo:
-            await update.message.reply_photo(photo=logo)
+    # Send logo if available. Read in a thread: this runs on every /start,
+    # and reading it here would stall every other user's handler.
+    logo = await read_image_bytes(logo_path)
+    if logo:
+        await update.message.reply_photo(photo=logo)
 
     # Send welcome message with wallet balance
     balance_line = t('main_menu.wallet_balance', lang, balance=format_price(wallet_balance))
@@ -390,7 +391,7 @@ async def show_products_list(query, category_id=None, subcategory_id=None, page=
     # Create product buttons
     product_buttons = [
         [InlineKeyboardButton(
-            f"{name} | {format_price(price)} | Available: {stock}",
+            f"{name} · {format_price(price)} · {format_stock(stock)}",
             callback_data=f"product_{prod_id}"
         )]
         for prod_id, name, price, stock in page_info['items']
@@ -499,28 +500,25 @@ async def product_detail_callback(update: Update, context: ContextTypes.DEFAULT_
             # Format product details
             details = format_product_display(product, include_description=True)
 
-            return details, product.image_path, back_callback
+            return details, product.image_path, back_callback, product.stock_count > 0
 
     result = await asyncio.to_thread(_sync)
     if result is None:
         await query.edit_message_text("❌ Product not found.")
         return
-    details, image_path, back_callback = result
+    details, image_path, back_callback, in_stock = result
 
-    # Send product image if available
-    if image_path and os.path.exists(image_path):
-        with open(image_path, 'rb') as image:
-            await query.message.reply_photo(
-                photo=image,
-                caption=details,
-                reply_markup=create_product_detail_keyboard(product_id, back_callback)
-            )
+    keyboard = create_product_detail_keyboard(product_id, back_callback,
+                                              in_stock=in_stock)
+
+    # Send product image if available, read off the event loop.
+    image = await read_image_bytes(image_path)
+    if image:
+        await query.message.reply_photo(
+            photo=image, caption=details, reply_markup=keyboard)
         await query.message.delete()
     else:
-        await query.edit_message_text(
-            details,
-            reply_markup=create_product_detail_keyboard(product_id, back_callback)
-        )
+        await query.edit_message_text(details, reply_markup=keyboard)
 
 
 async def availability_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):

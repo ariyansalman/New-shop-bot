@@ -6,7 +6,8 @@ from .i18n import t, DEFAULT_LANG, SUPPORTED_LANGS
 from .helpers import (
     is_admin, admin_only, format_price,
     format_datetime, calculate_expiry_time, paginate_items,
-    validate_amount, format_product_display,
+    validate_amount, format_product_display, format_stock, read_image_bytes,
+    LOW_STOCK_THRESHOLD,
     notify_admin, build_availability_text, parse_keys_from_text,
     check_user_banned, check_user_banned_async, clear_ban_cache
 )
@@ -33,6 +34,7 @@ __all__ = [
     'create_main_menu_keyboard', 'create_back_support_keyboard',
     'create_pagination_keyboard', 'create_product_detail_keyboard',
     'create_quantity_keyboard',
+    'format_stock', 'read_image_bytes', 'LOW_STOCK_THRESHOLD',
     'create_cancel_keyboard', 'create_payment_method_keyboard',
     'payment_methods_available', 'two_column_rows',
     'create_support_keyboard', 'create_admin_main_menu_keyboard',
