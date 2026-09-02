@@ -96,23 +96,16 @@ def create_cancel_keyboard():
 def payment_methods_available() -> list:
     """The top-up methods this deployment can actually complete.
 
-    A method is offered only when its credentials are set. Showing a button
-    that cannot work is worse than showing nothing: CryptoBot in particular
-    used to accept the tap, write a PENDING transaction row, fail against
-    the API, and tell the user to "try again" - advice that could never
-    succeed, once per attempt, with a dead row left behind each time.
+    A method is offered only when its credentials are set AND no admin has
+    switched it off. Showing a button that cannot work is worse than showing
+    nothing: CryptoBot in particular used to accept the tap, write a PENDING
+    transaction row, fail against the API, and tell the user to "try again" -
+    advice that could never succeed, once per attempt, with a dead row left
+    behind each time.
     """
-    from config.settings import settings as app_settings
-    from handlers.binance_pay_handlers import binance_pay_available
+    from services import payment_methods
 
-    methods = []
-    if app_settings.CRYPTO_BOT_API_KEY:
-        methods.append(("🪙 CryptoBot", "pay_crypto"))
-    if app_settings.TELEGRAM_PROVIDER_TOKEN:
-        methods.append(("💳 Card", "pay_card"))
-    if binance_pay_available():
-        methods.append(("🟡 Binance Pay", "pay_binance"))
-    return methods
+    return [(s.label, s.callback) for s in payment_methods.available_specs()]
 
 
 def create_payment_method_keyboard():
@@ -175,7 +168,7 @@ def create_admin_main_menu_keyboard():
         InlineKeyboardButton("👥 Users", callback_data="admin_users"),
         InlineKeyboardButton("🛍 Orders", callback_data="admin_orders"),
         InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"),
-        InlineKeyboardButton("🟡 Binance Pay", callback_data="binadmin_menu"),
+        InlineKeyboardButton("💳 Payments", callback_data="payadmin_menu"),
         InlineKeyboardButton("⚙️ Settings", callback_data="admin_settings"),
         # Odd one out, so it lands on its own full-width row.
         InlineKeyboardButton("📜 Admin Action Log", callback_data="admin_action_log"),

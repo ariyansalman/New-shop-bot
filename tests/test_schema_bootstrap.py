@@ -18,7 +18,7 @@ from sqlalchemy import create_engine, inspect
 import database.db as db
 
 
-HEAD = "f2b9d61c8a74"
+HEAD = "a3c8e5f10b76"
 
 # The shape of a real pre-Alembic deployment: no alembic_version, no
 # users.language, no transactions.provider*, no settings.binance_pay_enabled,

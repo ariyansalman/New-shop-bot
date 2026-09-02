@@ -12,7 +12,8 @@ from config import settings, validate_settings, init_sentry
 from database.init_data import initialize_database
 from handlers import (user_handlers, admin_handlers, payment_handlers,
                       admin_conversations, dispute_handlers, binance_pay_handlers,
-                      binance_admin)
+                      binance_admin, payments_admin)
+from services import payment_methods
 
 # M""M M"""""""`YM M""""""'YMM M"""""`'"""`YM M""""""'YMM MM""""""""`M M""MMMMM""M 
 # M  M M  mmmm.  M M  mmmm. `M M  mm.  mm.  M M  mmmm. `M MM  mmmmmmmM M  MMMMM  M 
@@ -525,6 +526,16 @@ def build_application(post_init=None):
 
     # Binance admin panel. Every one of these re-checks is_admin() itself -
     # the pattern is not the authorization.
+    # Admin -> Payments hub, and one screen per method. The toggle pattern
+    # is matched before the detail pattern, which would otherwise swallow
+    # "payadmin_toggle_<key>" as a method named "toggle_<key>".
+    application.add_handler(CallbackQueryHandler(
+        payments_admin.payments_menu, pattern="^payadmin_menu$"))
+    application.add_handler(CallbackQueryHandler(
+        payments_admin.payment_method_toggle, pattern="^payadmin_toggle_"))
+    application.add_handler(CallbackQueryHandler(
+        payments_admin.payment_method_detail, pattern="^payadmin_"))
+
     application.add_handler(CallbackQueryHandler(
         binance_admin.binance_admin_menu, pattern="^binadmin_menu$"))
     application.add_handler(CallbackQueryHandler(
@@ -597,10 +608,9 @@ def main():
         logger.error(f"Database initialization error: {e}")
         return
 
-    # Load the Binance kill switch once, before any update is served, so
-    # binance_pay_available() never has to touch the database from the
-    # event loop.
-    binance_pay_handlers.refresh_admin_toggle()
+    # Load the payment method switches once, before any update is served,
+    # so the keyboard builders never touch the database from the event loop.
+    payment_methods.refresh()
 
     application = build_application()
 

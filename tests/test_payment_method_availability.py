@@ -13,9 +13,9 @@ import pytest
 from config.settings import settings
 from database import get_db_session, User, Transaction
 from handlers import payment_handlers as ph
-from handlers import binance_pay_handlers as bp
 from utils.keyboards import create_payment_method_keyboard, payment_methods_available
-from fakes import FakeUpdate, FakeQuery, FakeContext
+from fakes import FakeUpdate, FakeQuery, FakeContext, set_switch
+
 
 TELEGRAM_ID = 909003
 
@@ -26,7 +26,7 @@ def no_methods(monkeypatch):
     monkeypatch.setattr(settings, "CRYPTO_BOT_API_KEY", "", raising=False)
     monkeypatch.setattr(settings, "TELEGRAM_PROVIDER_TOKEN", "", raising=False)
     monkeypatch.setattr(settings, "BINANCE_PAY_ENABLED", False, raising=False)
-    monkeypatch.setattr(bp, "_admin_toggle", True, raising=False)
+    set_switch("binance", True, monkeypatch)
 
 
 def enable_binance(monkeypatch):

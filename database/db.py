@@ -156,6 +156,8 @@ _MIGRATION_PROBES = [
     # f2b9d61c8a74: settings.binance_pay_enabled made nullable
     ("f2b9d61c8a74", lambda i: bool(
         (_column(i, "settings", "binance_pay_enabled") or {}).get("nullable"))),
+    # a3c8e5f10b76: admin switches for CryptoBot and Card
+    ("a3c8e5f10b76", lambda i: "card_pay_enabled" in _column_names(i, "settings")),
 ]
 
 # The revision an unstamped database is at when none of the probes pass.

@@ -34,7 +34,7 @@ from database.init_data import initialize_database      # noqa: E402
 from telegram import Update                              # noqa: E402
 import bot as bot_module                                # noqa: E402
 import webhook_server                                   # noqa: E402
-from handlers import binance_pay_handlers               # noqa: E402
+from services import payment_methods                    # noqa: E402
 
 
 def _make_threadsafe_notifier(application, loop):
@@ -77,10 +77,10 @@ def main():
         logger.error("Database initialization failed: %s", e)
         sys.exit(1)
 
-    # 2b. Load the Binance admin kill switch once, before any update is
-    #     served. binance_pay_available() is called from keyboard builders
-    #     on the event loop, so it must never read the database itself.
-    binance_pay_handlers.refresh_admin_toggle()
+    # 2b. Load the payment method switches once, before any update is
+    #     served. They are read by keyboard builders on the event loop, so
+    #     they must never hit the database themselves.
+    payment_methods.refresh()
 
     # 3. Make sure the asset directories exist (a Railway Volume mounts empty).
     for directory in (settings.ASSETS_DIR, settings.LOGOS_DIR, settings.PRODUCTS_DIR):

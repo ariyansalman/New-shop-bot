@@ -20,7 +20,8 @@ from database import (
 )
 from handlers import binance_pay_handlers as bp
 from handlers import binance_admin as ba
-from fakes import FakeUpdate, FakeQuery, FakeContext
+from fakes import FakeUpdate, FakeQuery, FakeContext, set_switch
+
 
 TELEGRAM_ID = 909002
 ADMIN_ID = 700700
@@ -42,7 +43,7 @@ def binance_enabled(monkeypatch):
     monkeypatch.setattr(settings, "TELEGRAM_PROVIDER_TOKEN", "test:provider", raising=False)
     # The kill switch is a module-level cache; keep tests independent of
     # whatever a previous test left in it.
-    monkeypatch.setattr(bp, "_admin_toggle", True, raising=False)
+    set_switch("binance", True, monkeypatch)
 
 
 def make_user(balance="0.00") -> int:
@@ -177,7 +178,7 @@ async def test_retry_is_a_no_op_when_binance_is_switched_off(monkeypatch):
     user_id = make_user()
     txn_id = make_txn(user_id, provider_txn_id="MOCK-SUCCESS-10.00",
                       attempts=1, last_attempt=datetime.utcnow() - timedelta(hours=1))
-    monkeypatch.setattr(bp, "_admin_toggle", False, raising=False)
+    set_switch("binance", False, monkeypatch)
 
     await bp.retry_pending_binance_payments(FakeContext())
 
@@ -281,7 +282,7 @@ async def test_toggle_persists_and_hides_the_method_from_users():
     with get_db_session() as session:
         assert session.query(StoreSettings).first().binance_pay_enabled is False
         assert session.query(AdminActionLog).filter_by(
-            action="binance_pay_disable").count() == 1
+            action="payment_binance_disable").count() == 1
 
     # And back on again.
     update, query = admin_update("binadmin_toggle")
@@ -310,7 +311,7 @@ async def test_toggle_enables_when_the_env_default_is_off(monkeypatch):
     a second query.answer() that Telegram drops, so nothing happened at all.
     """
     monkeypatch.setattr(settings, "BINANCE_PAY_ENABLED", False, raising=False)
-    monkeypatch.setattr(bp, "_admin_toggle", None, raising=False)
+    set_switch("binance", None, monkeypatch)
     assert bp.binance_pay_available() is False
 
     update, query = admin_update("binadmin_toggle")
@@ -324,7 +325,7 @@ async def test_toggle_enables_when_the_env_default_is_off(monkeypatch):
 async def test_the_admin_choice_outlives_the_env_default(monkeypatch):
     """Once an admin decides, BINANCE_PAY_ENABLED stops deciding."""
     monkeypatch.setattr(settings, "BINANCE_PAY_ENABLED", True, raising=False)
-    monkeypatch.setattr(bp, "_admin_toggle", None, raising=False)
+    set_switch("binance", None, monkeypatch)
     assert bp.binance_pay_available() is True
 
     update, _query = admin_update("binadmin_toggle")
@@ -336,7 +337,7 @@ async def test_the_admin_choice_outlives_the_env_default(monkeypatch):
 
 
 async def test_untouched_switch_follows_the_environment(monkeypatch):
-    monkeypatch.setattr(bp, "_admin_toggle", None, raising=False)
+    set_switch("binance", None, monkeypatch)
 
     monkeypatch.setattr(settings, "BINANCE_PAY_ENABLED", True, raising=False)
     assert bp.binance_pay_available() is True

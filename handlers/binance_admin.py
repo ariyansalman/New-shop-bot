@@ -32,6 +32,7 @@ from sqlalchemy import func
 from database import get_db_session, Transaction, TransactionStatus, PaymentMethod
 from config.settings import settings
 from handlers import binance_pay_handlers as bp
+from services import payment_methods
 from services.binance_pay import get_service
 from utils import is_admin, notify_admin
 from utils.audit import log_admin_action
@@ -99,7 +100,7 @@ def _settings_text() -> str:
         state = "🔴 unusable - missing " + ", ".join(_missing_credentials())
     elif bp.binance_pay_available():
         state = "🟢 live - customers can pay with Binance"
-    elif bp._admin_toggle is None:
+    elif payment_methods.switch_state(bp.PROVIDER) is None:
         state = "⚪️ off by default (BINANCE_PAY_ENABLED is not set)"
     else:
         state = "🟠 switched off by an admin"
@@ -154,7 +155,7 @@ def _settings_keyboard():
         # changes what customers can do, and it should not be a half-width
         # neighbour of something harmless.
         [InlineKeyboardButton(toggle, callback_data="binadmin_toggle")],
-        [InlineKeyboardButton("🔙 Back", callback_data="admin_menu")],
+        [InlineKeyboardButton("🔙 Back", callback_data="payadmin_menu")],
     ])
 
 
@@ -242,7 +243,7 @@ async def binance_admin_test(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await asyncio.to_thread(_log_sync)
 
     await query.edit_message_text(body, reply_markup=InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔙 Back", callback_data="binadmin_menu")],
+        [InlineKeyboardButton("🔙 Back", callback_data="payadmin_menu")],
     ]))
 
 
@@ -371,7 +372,7 @@ async def binance_admin_monitor(update: Update, context: ContextTypes.DEFAULT_TY
     if nav:
         keyboard.append(nav)
 
-    keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="binadmin_menu")])
+    keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="payadmin_menu")])
 
     try:
         await query.edit_message_text("\n".join(lines),
@@ -415,7 +416,7 @@ async def binance_admin_retry(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text(
             "❌ Transaction not found.",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔙 Back", callback_data="binadmin_menu")]]))
+                [InlineKeyboardButton("🔙 Back", callback_data="payadmin_menu")]]))
         return
 
     user_telegram_id, provider_txn_id = loaded
@@ -424,7 +425,7 @@ async def binance_admin_retry(update: Update, context: ContextTypes.DEFAULT_TYPE
             "❌ This transaction has no Binance ID submitted yet, so there "
             "is nothing to verify.",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔙 Back", callback_data="binadmin_menu")]]))
+                [InlineKeyboardButton("🔙 Back", callback_data="payadmin_menu")]]))
         return
 
     # A manual re-verify should not be blocked by an exhausted budget - the
@@ -450,7 +451,7 @@ async def binance_admin_retry(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text(
             "❌ Verification could not be completed. Check the logs.",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔙 Back", callback_data="binadmin_menu")]]))
+                [InlineKeyboardButton("🔙 Back", callback_data="payadmin_menu")]]))
         return
 
     settled = user_text.startswith("✅") or user_text.startswith("❌")
@@ -468,7 +469,7 @@ async def binance_admin_retry(update: Update, context: ContextTypes.DEFAULT_TYPE
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("📊 Payment Monitoring",
                                   callback_data="binadmin_mon_pending_0")],
-            [InlineKeyboardButton("🔙 Back", callback_data="binadmin_menu")],
+            [InlineKeyboardButton("🔙 Back", callback_data="payadmin_menu")],
         ]))
 
 
@@ -518,5 +519,5 @@ async def binance_admin_close(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([
         [InlineKeyboardButton("📊 Payment Monitoring",
                               callback_data="binadmin_mon_pending_0")],
-        [InlineKeyboardButton("🔙 Back", callback_data="binadmin_menu")],
+        [InlineKeyboardButton("🔙 Back", callback_data="payadmin_menu")],
     ]))

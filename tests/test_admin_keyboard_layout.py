@@ -8,6 +8,7 @@ right and does nothing. These pin both.
 import pytest
 
 from config.settings import settings
+from fakes import set_switch
 from utils.keyboards import (
     two_column_rows,
     create_admin_main_menu_keyboard,
@@ -65,7 +66,7 @@ def test_main_menu_layout():
     assert rows(create_admin_main_menu_keyboard()) == [
         ["📦 Products", "👥 Users"],
         ["🛍 Orders", "📢 Broadcast"],
-        ["🟡 Binance Pay", "⚙️ Settings"],
+        ["💳 Payments", "⚙️ Settings"],
         ["📜 Admin Action Log"],
         ["🔙 Exit Admin"],
     ]
@@ -87,12 +88,11 @@ def test_order_menu_separates_reading_from_changing():
 def test_binance_kill_switch_never_shares_a_row(monkeypatch):
     """A half-width neighbour makes the one customer-facing switch mis-tappable."""
     from handlers import binance_admin as ba
-    from handlers import binance_pay_handlers as bp
 
     monkeypatch.setattr(settings, "BINANCE_PAY_ENABLED", True, raising=False)
     monkeypatch.setattr(settings, "BINANCE_TEST_MODE", True, raising=False)
     monkeypatch.setattr(settings, "BINANCE_PAY_ID", "1", raising=False)
-    monkeypatch.setattr(bp, "_admin_toggle", True, raising=False)
+    set_switch("binance", True, monkeypatch)
 
     for row in ba._settings_keyboard().inline_keyboard:
         if any(b.callback_data == "binadmin_toggle" for b in row):

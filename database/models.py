@@ -280,6 +280,12 @@ class Settings(Base):
     store_logo_path = Column(String(500), nullable=True)
     support_username = Column(String(255), nullable=True)
     channel_username = Column(String(255), nullable=True)
+    # Admin switches for the top-up methods. NULL means no admin has
+    # decided, in which case the method's environment variable supplies the
+    # answer; see services/payment_methods.py, which owns all three.
+    crypto_pay_enabled = Column(Boolean, nullable=True)
+    card_pay_enabled = Column(Boolean, nullable=True)
+
     # The admin switch for Binance top-ups, and the only runtime on/off.
     # NULL means no admin has touched it, in which case BINANCE_PAY_ENABLED
     # supplies the answer - the environment variable sets the starting

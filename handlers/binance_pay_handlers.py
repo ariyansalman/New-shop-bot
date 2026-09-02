@@ -30,12 +30,11 @@ from telegram.ext import ContextTypes, ConversationHandler
 
 from database import (
     get_db_session, User, Transaction, TransactionStatus, PaymentMethod,
-    Settings as StoreSettings,
 )
 from config.settings import settings
 from services.binance_pay import get_service, VerificationOutcome
+from services import payment_methods
 from utils import notify_admin, to_money
-from utils.audit import log_admin_action
 
 logger = logging.getLogger(__name__)
 
@@ -67,56 +66,19 @@ _RETRY_BATCH_SIZE = 10
 # supplies the answer. Once an admin uses the switch, their choice wins:
 # the environment variable is the starting position, not a veto that the
 # panel can never overcome.
-_admin_toggle = None
-
-
 def _switch_is_on() -> bool:
     """The live on/off state: the admin's choice, else the environment."""
-    if _admin_toggle is None:
-        return settings.BINANCE_PAY_ENABLED
-    return _admin_toggle
-
-
-def _read_admin_toggle_sync():
-    """Load the switch from the database. Call from a thread."""
-    global _admin_toggle
-    with get_db_session() as session:
-        row = session.query(StoreSettings.binance_pay_enabled).first()
-        _admin_toggle = None if row is None or row[0] is None else bool(row[0])
-    return _admin_toggle
+    return payment_methods.is_on(PROVIDER)
 
 
 def _write_admin_toggle_sync(enabled: bool, admin_telegram_id: int) -> bool:
-    """Persist the kill switch and update the cache. Call from a thread."""
-    global _admin_toggle
-    with get_db_session() as session:
-        row = session.query(StoreSettings).first()
-        if row is None:
-            row = StoreSettings()
-            session.add(row)
-        row.binance_pay_enabled = enabled
-        log_admin_action(
-            session, admin_telegram_id,
-            "binance_pay_enable" if enabled else "binance_pay_disable",
-            target_type="settings",
-        )
-        session.commit()
-    _admin_toggle = enabled
-    return enabled
+    """Persist the switch and update the cache. Call from a thread."""
+    return payment_methods.set_switch_sync(PROVIDER, enabled, admin_telegram_id)
 
 
-def refresh_admin_toggle() -> bool:
-    """Load the kill switch at startup, before any update is served."""
-    try:
-        return _read_admin_toggle_sync()
-    except Exception:
-        # A settings table that predates the column, or an unreachable
-        # database at boot. Fail open to the environment configuration:
-        # this switch exists to disable a working method, not to be a
-        # second thing that can silently break a working one.
-        logger.warning("Could not load the Binance switch - falling back to "
-                       "BINANCE_PAY_ENABLED", exc_info=True)
-        return _admin_toggle
+def refresh_admin_toggle():
+    """Load the switch at startup, before any update is served."""
+    return payment_methods.refresh().get(PROVIDER)
 
 
 def binance_configured() -> bool:
@@ -129,11 +91,7 @@ def binance_configured() -> bool:
     environment variable was off, and the environment variable is not
     something the panel can change.
     """
-    if not settings.BINANCE_PAY_ID:
-        return False
-    if settings.BINANCE_TEST_MODE:
-        return True
-    return bool(settings.BINANCE_API_KEY and settings.BINANCE_API_SECRET)
+    return payment_methods.configured(PROVIDER)
 
 
 def binance_pay_available() -> bool:
@@ -142,7 +100,7 @@ def binance_pay_available() -> bool:
     Hidden unless it is switched on AND actually usable, so a user can
     never reach a checkout whose payment could never be verified.
     """
-    return binance_configured() and _switch_is_on()
+    return payment_methods.available(PROVIDER)
 
 
 def _remaining_time(expires_at) -> str:

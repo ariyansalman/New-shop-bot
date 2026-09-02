@@ -80,3 +80,17 @@ class FakeMessageUpdate:
     def __init__(self, message: FakeMessage, user_id: int):
         self.message = message
         self.effective_user = FakeUser(user_id)
+
+
+def set_switch(key, value, monkeypatch):
+    """Set one payment method's admin switch for the duration of a test.
+
+    The switches are a process-level cache in services.payment_methods, so
+    setting one directly would leak into every test that follows.
+    monkeypatch.setitem restores it afterwards.
+
+    value: True/False for an admin decision, None for "not decided" (which
+    makes the method follow its environment variable).
+    """
+    from services import payment_methods
+    monkeypatch.setitem(payment_methods._switches, key, value)
