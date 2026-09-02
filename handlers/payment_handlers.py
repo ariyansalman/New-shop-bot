@@ -923,6 +923,11 @@ async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 price=product.price
             )
 
+            # Copy the instructions onto the line now: this is the receipt,
+            # and it must keep reading correctly after the product's
+            # instructions are edited or the product is deleted.
+            order_item.delivery_instructions = product.delivery_instructions
+
             if product.product_type == ProductType.KEY:
                 key_values = []
                 for key in assigned_keys:
@@ -935,6 +940,9 @@ async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 order_item.delivered_asset = product.download_link or ""
                 order_details = f"📦 {product.name}\n🔗 Download: {order_item.delivered_asset}\n"
+
+            if order_item.delivery_instructions:
+                order_details += f"\n📋 How to use it:\n{order_item.delivery_instructions}\n"
 
             product.stock_count -= quantity
             user.wallet_balance = to_money(user.wallet_balance - total)

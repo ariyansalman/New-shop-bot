@@ -702,6 +702,10 @@ async def user_order_detail_callback(update: Update, context: ContextTypes.DEFAU
                         items_text += f"  🔗 Download: {item.delivered_asset}\n"
                     else:
                         items_text += f"  📄 {item.delivered_asset}\n"
+                # Taken from the line, not the product: the product may have
+                # been edited or deleted since, and this is the receipt.
+                if item.delivery_instructions:
+                    items_text += f"  📋 How to use it:\n{item.delivery_instructions}\n"
                 items_text += "\n"
 
             status_emoji = {

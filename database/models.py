@@ -129,6 +129,10 @@ class Product(Base):
     subcategory_id = Column(Integer, ForeignKey('subcategories.id'), nullable=True)
     image_path = Column(String(500), nullable=True)
     download_link = Column(String(500), nullable=True)  # For file-type products
+    # Shown to the buyer alongside the key or link: how to redeem it, where
+    # to enter it, what it will not work with. Optional - a product without
+    # instructions delivers exactly as it did before.
+    delivery_instructions = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -212,6 +216,11 @@ class OrderItem(Base):
     quantity = Column(Integer, nullable=False)
     price = Column(Money, nullable=False)
     delivered_asset = Column(Text, nullable=True)  # Keys or download link
+    # Copied from the product at purchase time, for the same reason
+    # delivered_asset is: this line is the customer's receipt, and it has to
+    # keep reading correctly after the product's instructions are edited or
+    # the product itself is deleted.
+    delivery_instructions = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships

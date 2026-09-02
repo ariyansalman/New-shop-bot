@@ -149,6 +149,10 @@ def build_application(post_init=None):
                 MessageHandler(filters.PHOTO | filters.TEXT, admin_conversations.product_image),
                 CallbackQueryHandler(admin_conversations.cancel_product_creation, pattern="^cancel_product$")
             ],
+            admin_conversations.PRODUCT_INSTRUCTIONS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_conversations.product_instructions),
+                CallbackQueryHandler(admin_conversations.cancel_product_creation, pattern="^cancel_product$")
+            ],
             admin_conversations.PRODUCT_DOWNLOAD_LINK: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, admin_conversations.product_download_link),
                 CallbackQueryHandler(admin_conversations.cancel_product_creation, pattern="^cancel_product$")

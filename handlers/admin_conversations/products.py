@@ -18,14 +18,14 @@ from telegram.ext import ContextTypes, ConversationHandler
 from database import (
     get_db_session, Category, Subcategory, Product, ProductType
 )
-from utils import is_admin, format_price, money_or_none, log_admin_action, create_admin_product_menu_keyboard
+from utils import is_admin, format_price, money_or_none, log_admin_action, create_admin_product_menu_keyboard, two_column_rows
 from config.settings import settings as app_settings
 
 logger = logging.getLogger(__name__)
 
 # Conversation states
 # Conversation states for product creation
-PRODUCT_NAME, PRODUCT_DESC, PRODUCT_PRICE, PRODUCT_TYPE, PRODUCT_CATEGORY, PRODUCT_SUBCATEGORY, PRODUCT_IMAGE, PRODUCT_DOWNLOAD_LINK, PRODUCT_KEYS = range(9)
+PRODUCT_NAME, PRODUCT_DESC, PRODUCT_PRICE, PRODUCT_TYPE, PRODUCT_CATEGORY, PRODUCT_SUBCATEGORY, PRODUCT_IMAGE, PRODUCT_INSTRUCTIONS, PRODUCT_DOWNLOAD_LINK, PRODUCT_KEYS = range(10)
 
 # Conversation states for product edit
 EDIT_SELECT_PRODUCT, EDIT_SELECT_FIELD, EDIT_NEW_VALUE, EDIT_IMAGE_VALUE = range(4)
@@ -246,25 +246,7 @@ async def product_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text and update.message.text.lower() == 'skip':
         context.user_data['product_image'] = None
 
-        # Check if it's a file type product
-        if context.user_data['product_type'] == ProductType.FILE:
-            await update.message.reply_text(
-                "🔗 Please enter the download link for this file product:",
-                reply_markup=InlineKeyboardMarkup(cancel_keyboard)
-            )
-            return PRODUCT_DOWNLOAD_LINK
-        else:
-            # Ask for keys for KEY products
-            await update.message.reply_text(
-                "🔑 Please paste the product keys (one per line) or upload a .txt file:\n\n"
-                "Example:\n"
-                "KEY1-XXXX-XXXX-XXXX\n"
-                "KEY2-XXXX-XXXX-XXXX\n"
-                "KEY3-XXXX-XXXX-XXXX\n\n"
-                "Or type 'skip' to add keys later.",
-                reply_markup=InlineKeyboardMarkup(cancel_keyboard)
-            )
-            return PRODUCT_KEYS
+        return await _ask_for_instructions(update)
 
     elif update.message.photo:
         # Download and save image
@@ -279,31 +261,82 @@ async def product_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         context.user_data['product_image'] = image_path
 
-        # Check if it's a file type product
-        if context.user_data['product_type'] == ProductType.FILE:
-            await update.message.reply_text(
-                "🔗 Please enter the download link for this file product:",
-                reply_markup=InlineKeyboardMarkup(cancel_keyboard)
-            )
-            return PRODUCT_DOWNLOAD_LINK
-        else:
-            # Ask for keys for KEY products
-            await update.message.reply_text(
-                "🔑 Please paste the product keys (one per line) or upload a .txt file:\n\n"
-                "Example:\n"
-                "KEY1-XXXX-XXXX-XXXX\n"
-                "KEY2-XXXX-XXXX-XXXX\n"
-                "KEY3-XXXX-XXXX-XXXX\n\n"
-                "Or type 'skip' to add keys later.",
-                reply_markup=InlineKeyboardMarkup(cancel_keyboard)
-            )
-            return PRODUCT_KEYS
+        return await _ask_for_instructions(update)
     else:
         await update.message.reply_text(
             "❌ Please send an image or type 'skip':",
             reply_markup=InlineKeyboardMarkup(cancel_keyboard)
         )
         return PRODUCT_IMAGE
+
+
+_MAX_INSTRUCTIONS = 2000
+
+
+def _cancel_markup():
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("❌ Cancel", callback_data="cancel_product")]])
+
+
+async def _ask_for_instructions(update):
+    """Ask for the delivery instructions, after the image step."""
+    await update.message.reply_text(
+        "📝 Delivery instructions for this product (optional).\n\n"
+        "This is sent to the buyer together with the key or link - how to "
+        "redeem it, where to enter it, anything they must know.\n\n"
+        "Example:\n"
+        "1. Go to netflix.com/redeem\n"
+        "2. Enter the code above\n"
+        "3. Works on new accounts only\n\n"
+        "Or type 'skip' to send nothing extra.",
+        reply_markup=_cancel_markup()
+    )
+    return PRODUCT_INSTRUCTIONS
+
+
+async def _ask_for_asset(update, context):
+    """Ask for whatever this product type is delivered from."""
+    if context.user_data['product_type'] == ProductType.FILE:
+        await update.message.reply_text(
+            "🔗 Please enter the download link for this file product:",
+            reply_markup=_cancel_markup()
+        )
+        return PRODUCT_DOWNLOAD_LINK
+
+    await update.message.reply_text(
+        "🔑 Please paste the product keys (one per line) or upload a .txt file:\n\n"
+        "Example:\n"
+        "KEY1-XXXX-XXXX-XXXX\n"
+        "KEY2-XXXX-XXXX-XXXX\n"
+        "KEY3-XXXX-XXXX-XXXX\n\n"
+        "Or type 'skip' to add keys later.",
+        reply_markup=_cancel_markup()
+    )
+    return PRODUCT_KEYS
+
+
+async def product_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the optional delivery instructions."""
+    text = (update.message.text or "").strip()
+
+    if text.lower() == 'skip':
+        context.user_data['product_instructions'] = None
+        return await _ask_for_asset(update, context)
+
+    if len(text) > _MAX_INSTRUCTIONS:
+        # The delivery message carries the keys too, and Telegram rejects
+        # anything over 4096 characters outright - which would mean a paid
+        # order whose keys never arrive.
+        await update.message.reply_text(
+            f"❌ That is {len(text)} characters; please keep instructions "
+            f"under {_MAX_INSTRUCTIONS} so they still fit in the delivery "
+            "message alongside the keys.",
+            reply_markup=_cancel_markup()
+        )
+        return PRODUCT_INSTRUCTIONS
+
+    context.user_data['product_instructions'] = text
+    return await _ask_for_asset(update, context)
 
 
 async def product_download_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -421,6 +454,7 @@ async def create_product_final(update, context):
     product_subcategory_id = context.user_data.get('product_subcategory')
     product_image_path = context.user_data.get('product_image')
     product_download_link_value = context.user_data.get('product_download_link')
+    product_instructions_value = context.user_data.get('product_instructions')
 
     def _sync():
         with get_db_session() as session:
@@ -448,6 +482,7 @@ async def create_product_final(update, context):
                 subcategory_id=product_subcategory_id,
                 image_path=product_image_path,
                 download_link=product_download_link_value,
+                delivery_instructions=product_instructions_value,
                 stock_count=stock_count,
                 is_active=True
             )
@@ -642,15 +677,27 @@ async def edit_select_product(update: Update, context: ContextTypes.DEFAULT_TYPE
     prod_name, price, category_name, subcategory_name, is_active, available_keys = result
 
     # Show fields to edit
-    keyboard = [
-        [InlineKeyboardButton("📦 Name", callback_data="edit_name")],
-        [InlineKeyboardButton("📝 Description", callback_data="edit_desc")],
-        [InlineKeyboardButton("💰 Price", callback_data="edit_price")],
-        [InlineKeyboardButton("🖼 Image", callback_data="edit_image")],
-        [InlineKeyboardButton("📁 Category", callback_data="edit_category")],
-        [InlineKeyboardButton("📂 Subcategory", callback_data="edit_subcategory")],
-        [InlineKeyboardButton("✅ Activate", callback_data="edit_activate")],
-        [InlineKeyboardButton("❌ Deactivate", callback_data="edit_deactivate")],
+    # Same two-column grid as the rest of the admin panel, except that the
+    # two destructive actions keep full-width rows of their own - at half
+    # width they would sit beside an ordinary edit, and neither is
+    # recoverable by pressing the button again.
+    keyboard = two_column_rows([
+        InlineKeyboardButton("📦 Name", callback_data="edit_name"),
+        InlineKeyboardButton("💰 Price", callback_data="edit_price"),
+        # The two blocks of text the buyer reads, side by side.
+        InlineKeyboardButton("📝 Description", callback_data="edit_desc"),
+        InlineKeyboardButton("📋 Instructions", callback_data="edit_instructions"),
+    ])
+    # Image is the odd one out; giving it its own row is what keeps the
+    # pairs below intact, rather than shunting Activate/Deactivate apart.
+    keyboard.append([InlineKeyboardButton("🖼 Image", callback_data="edit_image")])
+    keyboard += two_column_rows([
+        InlineKeyboardButton("📁 Category", callback_data="edit_category"),
+        InlineKeyboardButton("📂 Subcategory", callback_data="edit_subcategory"),
+        InlineKeyboardButton("✅ Activate", callback_data="edit_activate"),
+        InlineKeyboardButton("❌ Deactivate", callback_data="edit_deactivate"),
+    ])
+    keyboard += [
         [InlineKeyboardButton(f"🗑 Clear Keys ({available_keys})", callback_data="edit_clear_keys")],
         [InlineKeyboardButton("🗑 Delete Product", callback_data="edit_delete")],
         [InlineKeyboardButton("🔙 Cancel", callback_data="cancel_edit")]
@@ -904,6 +951,11 @@ async def edit_select_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return f"📝 Current description:\n{product.description or 'No description'}\n\nEnter new product description:"
             elif field == 'price':
                 return f"💰 Current price: {format_price(product.price)}\n\nEnter new product price (USD):"
+            elif field == 'instructions':
+                current = product.delivery_instructions or 'None'
+                return (f"📋 Current delivery instructions:\n{current}\n\n"
+                        "Send the new instructions, or type 'clear' to remove them.\n"
+                        "These go to the buyer with the key or link.")
             else:
                 return "unknown_field"
 
@@ -1011,6 +1063,13 @@ async def edit_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 product.name = new_value
             elif field == 'desc':
                 product.description = new_value
+            elif field == 'instructions':
+                if new_value.strip().lower() == 'clear':
+                    product.delivery_instructions = None
+                elif len(new_value.strip()) > _MAX_INSTRUCTIONS:
+                    return "too_long"
+                else:
+                    product.delivery_instructions = new_value.strip()
             elif field == 'price':
                 new_price = money_or_none(new_value)
                 if new_price is None or new_price <= 0:
@@ -1024,6 +1083,16 @@ async def edit_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return "ok"
 
     result = await asyncio.to_thread(_sync)
+
+    if result == "too_long":
+        await update.message.reply_text(
+            f"❌ That is {len(new_value.strip())} characters; please keep "
+            f"instructions under {_MAX_INSTRUCTIONS} so they still fit in the "
+            "delivery message alongside the keys.",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("❌ Cancel", callback_data="cancel_edit")]])
+        )
+        return EDIT_NEW_VALUE
 
     if result == "invalid_price":
         cancel_keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel_edit")]]
