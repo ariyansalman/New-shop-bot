@@ -17,5 +17,18 @@
   "purchase.button.topup_wallet": "💰 ኪስ ቦርሳ ሙላ",
   "purchase.banned": "⛔ ይህን ቦት እንዳይጠቀሙ ታግደዋል።",
   "language.prompt": "🌐 መጠቀም የሚፈልጉትን ቋንቋ ይምረጡ።",
-  "language.saved": "✅ ቋንቋው ወደ አማርኛ ተቀይሯል።"
+  "language.saved": "✅ ቋንቋው ወደ አማርኛ ተቀይሯል።",
+  "main_menu.button.terms": "📜 ውሎች እና ጥያቄዎች",
+  "wallet.title": "💰 ኪስ ቦርሳ",
+  "wallet.balance": "ቀሪ ሒሳብ፦ {balance}",
+  "wallet.in_progress": "⏳ በሂደት ላይ",
+  "wallet.recent": "📋 የቅርብ ጊዜ ክፍያዎች",
+  "wallet.empty": "እስካሁን ምንም ክፍያ የለም።",
+  "wallet.status.pending": "ክፍያ በመጠበቅ ላይ",
+  "wallet.status.verifying": "ክፍያዎ በመረጋገጥ ላይ",
+  "wallet.status.completed": "ወደ ሒሳብዎ ተጨምሯል",
+  "wallet.status.failed": "አልተሳካም",
+  "wallet.status.expired": "ጊዜው አልፎበታል",
+  "wallet.status.manual_review": "በቡድናችን በመገምገም ላይ",
+  "common.back": "🔙 ተመለስ"
 }

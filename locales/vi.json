@@ -17,5 +17,18 @@
   "purchase.button.topup_wallet": "💰 Nạp tiền vào ví",
   "purchase.banned": "⛔ Bạn đã bị cấm sử dụng bot này.",
   "language.prompt": "🌐 Chọn ngôn ngữ bạn muốn sử dụng.",
-  "language.saved": "✅ Đã đặt ngôn ngữ là Tiếng Việt."
+  "language.saved": "✅ Đã đặt ngôn ngữ là Tiếng Việt.",
+  "main_menu.button.terms": "📜 Điều khoản & Hỏi đáp",
+  "wallet.title": "💰 VÍ",
+  "wallet.balance": "Số dư: {balance}",
+  "wallet.in_progress": "⏳ Đang xử lý",
+  "wallet.recent": "📋 Nạp tiền gần đây",
+  "wallet.empty": "Chưa có lần nạp tiền nào.",
+  "wallet.status.pending": "đang chờ thanh toán",
+  "wallet.status.verifying": "đang kiểm tra thanh toán của bạn",
+  "wallet.status.completed": "đã cộng vào số dư",
+  "wallet.status.failed": "thất bại",
+  "wallet.status.expired": "đã hết hạn",
+  "wallet.status.manual_review": "đang được đội ngũ xem xét",
+  "common.back": "🔙 Quay lại"
 }

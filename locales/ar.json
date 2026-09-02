@@ -17,5 +17,18 @@
   "purchase.button.topup_wallet": "💰 شحن المحفظة",
   "purchase.banned": "⛔ تم حظرك من استخدام هذا البوت.",
   "language.prompt": "🌐 اختر اللغة التي تريد استخدامها.",
-  "language.saved": "✅ تم ضبط اللغة على العربية."
+  "language.saved": "✅ تم ضبط اللغة على العربية.",
+  "main_menu.button.terms": "📜 الشروط والأسئلة الشائعة",
+  "wallet.title": "💰 المحفظة",
+  "wallet.balance": "الرصيد: {balance}",
+  "wallet.in_progress": "⏳ قيد التنفيذ",
+  "wallet.recent": "📋 عمليات الشحن الأخيرة",
+  "wallet.empty": "لا توجد عمليات شحن بعد.",
+  "wallet.status.pending": "في انتظار الدفع",
+  "wallet.status.verifying": "جارٍ التحقق من دفعتك",
+  "wallet.status.completed": "أُضيف إلى رصيدك",
+  "wallet.status.failed": "فشل",
+  "wallet.status.expired": "منتهي الصلاحية",
+  "wallet.status.manual_review": "قيد المراجعة من فريقنا",
+  "common.back": "🔙 رجوع"
 }

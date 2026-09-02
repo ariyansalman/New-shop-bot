@@ -17,5 +17,18 @@
   "purchase.button.topup_wallet": "💰 为钱包充值",
   "purchase.banned": "⛔ 您已被禁止使用此机器人。",
   "language.prompt": "🌐 请选择您要使用的语言。",
-  "language.saved": "✅ 语言已设置为简体中文。"
+  "language.saved": "✅ 语言已设置为简体中文。",
+  "main_menu.button.terms": "📜 条款与常见问题",
+  "wallet.title": "💰 钱包",
+  "wallet.balance": "余额：{balance}",
+  "wallet.in_progress": "⏳ 处理中",
+  "wallet.recent": "📋 最近充值",
+  "wallet.empty": "暂无充值记录。",
+  "wallet.status.pending": "等待付款",
+  "wallet.status.verifying": "正在核实您的付款",
+  "wallet.status.completed": "已计入余额",
+  "wallet.status.failed": "失败",
+  "wallet.status.expired": "已过期",
+  "wallet.status.manual_review": "我们的团队正在审核",
+  "common.back": "🔙 返回"
 }

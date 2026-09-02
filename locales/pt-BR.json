@@ -17,5 +17,18 @@
   "purchase.button.topup_wallet": "💰 Adicionar saldo",
   "purchase.banned": "⛔ Você foi banido de usar este bot.",
   "language.prompt": "🌐 Escolha o idioma que deseja usar.",
-  "language.saved": "✅ Idioma definido como Português (Brasil)."
+  "language.saved": "✅ Idioma definido como Português (Brasil).",
+  "main_menu.button.terms": "📜 Termos e FAQ",
+  "wallet.title": "💰 CARTEIRA",
+  "wallet.balance": "Saldo: {balance}",
+  "wallet.in_progress": "⏳ Em andamento",
+  "wallet.recent": "📋 Recargas recentes",
+  "wallet.empty": "Nenhuma recarga ainda.",
+  "wallet.status.pending": "aguardando pagamento",
+  "wallet.status.verifying": "verificando seu pagamento",
+  "wallet.status.completed": "adicionado ao seu saldo",
+  "wallet.status.failed": "falhou",
+  "wallet.status.expired": "expirado",
+  "wallet.status.manual_review": "em análise pela nossa equipe",
+  "common.back": "🔙 Voltar"
 }

@@ -17,5 +17,18 @@
   "purchase.button.topup_wallet": "💰 Top Up Wallet",
   "purchase.banned": "⛔ You have been banned from using this bot.",
   "language.prompt": "🌐 Choose the language you want to use.",
-  "language.saved": "✅ Language set to English."
+  "language.saved": "✅ Language set to English.",
+  "main_menu.button.terms": "📜 Terms & FAQ",
+  "wallet.title": "💰 WALLET",
+  "wallet.balance": "Balance: {balance}",
+  "wallet.in_progress": "⏳ In progress",
+  "wallet.recent": "📋 Recent top-ups",
+  "wallet.empty": "No top-ups yet.",
+  "wallet.status.pending": "waiting for payment",
+  "wallet.status.verifying": "checking your payment",
+  "wallet.status.completed": "added to your balance",
+  "wallet.status.failed": "failed",
+  "wallet.status.expired": "expired",
+  "wallet.status.manual_review": "under review by our team",
+  "common.back": "🔙 Back"
 }

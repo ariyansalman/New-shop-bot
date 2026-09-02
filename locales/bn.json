@@ -17,5 +17,18 @@
   "purchase.button.topup_wallet": "💰 ওয়ালেটে টাকা যোগ করুন",
   "purchase.banned": "⛔ এই বটে আপনাকে ব্যান করা হয়েছে।",
   "language.prompt": "🌐 আপনি যে ভাষা ব্যবহার করতে চান বেছে নিন।",
-  "language.saved": "✅ ভাষা বাংলা করা হয়েছে।"
+  "language.saved": "✅ ভাষা বাংলা করা হয়েছে।",
+  "main_menu.button.terms": "📜 শর্তাবলী ও প্রশ্নোত্তর",
+  "wallet.title": "💰 ওয়ালেট",
+  "wallet.balance": "ব্যালেন্স: {balance}",
+  "wallet.in_progress": "⏳ চলমান",
+  "wallet.recent": "📋 সাম্প্রতিক টপ-আপ",
+  "wallet.empty": "এখনো কোনো টপ-আপ নেই।",
+  "wallet.status.pending": "পেমেন্টের অপেক্ষায়",
+  "wallet.status.verifying": "আপনার পেমেন্ট যাচাই করা হচ্ছে",
+  "wallet.status.completed": "ব্যালেন্সে যোগ হয়েছে",
+  "wallet.status.failed": "ব্যর্থ হয়েছে",
+  "wallet.status.expired": "মেয়াদ শেষ",
+  "wallet.status.manual_review": "আমাদের টিম পর্যালোচনা করছে",
+  "common.back": "🔙 ফিরে যান"
 }

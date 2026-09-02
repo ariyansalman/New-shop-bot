@@ -33,9 +33,10 @@ from .categories import (
 )
 
 from .store_settings import (
-    SETTING_VALUE, WELCOME_MESSAGE, STORE_LOGO,
+    SETTING_VALUE, WELCOME_MESSAGE, STORE_LOGO, TERMS_TEXT,
     config_support_username, config_channel_username, setting_value,
     config_welcome_message, welcome_message_value,
+    config_terms, terms_value,
     config_store_logo, store_logo_value, cancel_settings,
 )
 
@@ -69,9 +70,10 @@ __all__ = [
     'edit_category_start', 'edit_category_select', 'edit_category_field', 'edit_category_value',
     'edit_subcategory_start', 'edit_subcategory_select', 'edit_subcategory_field', 'edit_subcategory_value',
     # store settings
-    'SETTING_VALUE', 'WELCOME_MESSAGE', 'STORE_LOGO',
+    'SETTING_VALUE', 'WELCOME_MESSAGE', 'STORE_LOGO', 'TERMS_TEXT',
     'config_support_username', 'config_channel_username', 'setting_value',
     'config_welcome_message', 'welcome_message_value',
+    'config_terms', 'terms_value',
     'config_store_logo', 'store_logo_value', 'cancel_settings',
     # broadcast
     'BROADCAST_TEXT', 'BROADCAST_IMAGE',

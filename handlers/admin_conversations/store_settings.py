@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 # Conversation states
 SETTING_VALUE = 0
-WELCOME_MESSAGE, STORE_LOGO = range(2)
+WELCOME_MESSAGE, STORE_LOGO, TERMS_TEXT = range(3)
 
 
 # ==================== SETTINGS CONFIGURATION ====================
@@ -165,6 +165,72 @@ async def welcome_message_value(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_text(
         f"✅ Welcome message updated successfully!\n\n"
         f"New message:\n{new_message}",
+        reply_markup=create_admin_settings_menu_keyboard()
+    )
+
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
+# ==================== TERMS & FAQ FLOW ====================
+
+# Telegram rejects a message over 4096 characters, and the terms are shown
+# on their own screen with a heading above them.
+_MAX_TERMS = 3500
+
+
+async def config_terms(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start the Terms & FAQ flow."""
+    query = update.callback_query
+
+    if not is_admin(update.effective_user.id):
+        await query.answer("⛔ Access denied.", show_alert=True)
+        return ConversationHandler.END
+
+    await query.answer()
+
+    from services import store_content
+    current = await asyncio.to_thread(store_content.get_terms_sync)
+
+    from utils import create_cancel_keyboard
+    await query.edit_message_text(
+        "📜 Terms & FAQ\n\n"
+        "Shown to customers from the main menu. Use it for your refund "
+        "policy, warranty period, delivery times, and what makes a dispute "
+        "valid - stating the rules up front is what stops most disputes "
+        "becoming arguments.\n\n"
+        f"Current:\n{current or '(not set - the button is hidden)'}\n\n"
+        "Send the new text, or 'clear' to remove it:",
+        reply_markup=create_cancel_keyboard()
+    )
+    return TERMS_TEXT
+
+
+async def terms_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Save the Terms & FAQ text."""
+    text = (update.message.text or "").strip()
+    admin_id = update.effective_user.id
+
+    from utils import create_admin_settings_menu_keyboard, create_cancel_keyboard
+
+    if len(text) > _MAX_TERMS:
+        await update.message.reply_text(
+            f"❌ That is {len(text)} characters; please keep the terms under "
+            f"{_MAX_TERMS} so they fit in one Telegram message.",
+            reply_markup=create_cancel_keyboard()
+        )
+        return TERMS_TEXT
+
+    from services import store_content
+    if text.lower() == 'clear':
+        text = ""
+
+    now_visible = await asyncio.to_thread(store_content.set_terms_sync, text, admin_id)
+
+    await update.message.reply_text(
+        ("✅ Terms & FAQ updated. Customers can now see it from the main menu."
+         if now_visible else
+         "✅ Terms & FAQ cleared. The menu button is hidden again."),
         reply_markup=create_admin_settings_menu_keyboard()
     )
 

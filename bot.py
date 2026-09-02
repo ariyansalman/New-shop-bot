@@ -13,7 +13,7 @@ from database.init_data import initialize_database
 from handlers import (user_handlers, admin_handlers, payment_handlers,
                       admin_conversations, dispute_handlers, binance_pay_handlers,
                       binance_admin, payments_admin)
-from services import payment_methods
+from services import payment_methods, store_content
 
 # M""M M"""""""`YM M""""""'YMM M"""""`'"""`YM M""""""'YMM MM""""""""`M M""MMMMM""M 
 # M  M M  mmmm.  M M  mmmm. `M M  mm.  mm.  M M  mmmm. `M MM  mmmmmmmM M  MMMMM  M 
@@ -351,6 +351,23 @@ def build_application(post_init=None):
     )
     application.add_handler(config_welcome_conv)
 
+    # Terms & FAQ configuration conversation
+    config_terms_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_conversations.config_terms, pattern="^admin_terms$")],
+        states={
+            admin_conversations.TERMS_TEXT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_conversations.terms_value)],
+        },
+        fallbacks=[
+            MessageHandler(filters.COMMAND, admin_conversations.cancel_settings),
+            CallbackQueryHandler(admin_conversations.cancel_settings, pattern="^cancel$")
+        ],
+        per_user=True,
+        per_chat=True,
+        allow_reentry=True,
+    )
+    application.add_handler(config_terms_conv)
+
     # Store logo configuration conversation
     config_logo_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(admin_conversations.config_store_logo, pattern="^admin_store_logo$")],
@@ -445,6 +462,8 @@ def build_application(post_init=None):
 
     # Register callback query handlers
     application.add_handler(CallbackQueryHandler(user_handlers.main_menu_callback, pattern="^main_menu$"))
+    application.add_handler(CallbackQueryHandler(user_handlers.wallet_callback, pattern="^wallet$"))
+    application.add_handler(CallbackQueryHandler(user_handlers.terms_callback, pattern="^terms$"))
     application.add_handler(CallbackQueryHandler(user_handlers.language_callback, pattern="^language$"))
     application.add_handler(CallbackQueryHandler(user_handlers.set_language_callback, pattern="^set_lang_"))
     application.add_handler(CallbackQueryHandler(user_handlers.main_menu_callback, pattern="^back$"))  # Back button goes to main menu
@@ -612,6 +631,7 @@ def main():
     # Load the payment method switches once, before any update is served,
     # so the keyboard builders never touch the database from the event loop.
     payment_methods.refresh()
+    store_content.refresh()
 
     application = build_application()
 

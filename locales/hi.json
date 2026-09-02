@@ -17,5 +17,18 @@
   "purchase.button.topup_wallet": "💰 वॉलेट टॉप अप करें",
   "purchase.banned": "⛔ आपको इस बॉट का उपयोग करने से प्रतिबंधित कर दिया गया है।",
   "language.prompt": "🌐 वह भाषा चुनें जिसका आप उपयोग करना चाहते हैं।",
-  "language.saved": "✅ भाषा हिन्दी पर सेट कर दी गई।"
+  "language.saved": "✅ भाषा हिन्दी पर सेट कर दी गई।",
+  "main_menu.button.terms": "📜 नियम और सामान्य प्रश्न",
+  "wallet.title": "💰 वॉलेट",
+  "wallet.balance": "बैलेंस: {balance}",
+  "wallet.in_progress": "⏳ प्रक्रिया में",
+  "wallet.recent": "📋 हाल के टॉप अप",
+  "wallet.empty": "अभी तक कोई टॉप अप नहीं।",
+  "wallet.status.pending": "भुगतान की प्रतीक्षा में",
+  "wallet.status.verifying": "आपका भुगतान जाँचा जा रहा है",
+  "wallet.status.completed": "आपके बैलेंस में जोड़ा गया",
+  "wallet.status.failed": "विफल",
+  "wallet.status.expired": "समय समाप्त",
+  "wallet.status.manual_review": "हमारी टीम द्वारा समीक्षा में",
+  "common.back": "🔙 वापस"
 }

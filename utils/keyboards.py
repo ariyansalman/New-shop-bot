@@ -3,27 +3,40 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 
-def create_main_menu_keyboard(lang: str = 'en'):
+def create_main_menu_keyboard(lang: str = 'en', has_terms: bool = None):
     """Create the main menu keyboard for users.
 
     lang picks the button labels (see utils/i18n.py). The language button
     opens the picker rather than toggling: with ten languages there is no
     single "other one" to offer.
+
+    Products leads on its own row - it is why anyone opened the bot. The
+    rest pair up in the same two-column grid the admin panel uses, and
+    Terms joins them only when the store has actually written some: a
+    button leading to an empty page is worse than no button.
     """
     from .i18n import t
 
-    keyboard = [
-        [InlineKeyboardButton(t('main_menu.button.products', lang), callback_data="products")],
-        [
-            InlineKeyboardButton(t('main_menu.button.topup', lang), callback_data="topup"),
-            InlineKeyboardButton(t('main_menu.button.order_history', lang), callback_data="order_history")
-        ],
-        [
-            InlineKeyboardButton(t('main_menu.button.availability', lang), callback_data="availability"),
-            InlineKeyboardButton(t('main_menu.button.support', lang), callback_data="support")
-        ],
-        [InlineKeyboardButton(t('main_menu.button.language', lang), callback_data="language")],
+    if has_terms is None:
+        from services import store_content
+        has_terms = store_content.has_terms()
+
+    middle = [
+        InlineKeyboardButton(t('main_menu.button.wallet', lang), callback_data="wallet"),
+        InlineKeyboardButton(t('main_menu.button.order_history', lang), callback_data="order_history"),
+        InlineKeyboardButton(t('main_menu.button.topup', lang), callback_data="topup"),
+        InlineKeyboardButton(t('main_menu.button.availability', lang), callback_data="availability"),
+        InlineKeyboardButton(t('main_menu.button.support', lang), callback_data="support"),
     ]
+    if has_terms:
+        middle.append(
+            InlineKeyboardButton(t('main_menu.button.terms', lang), callback_data="terms"))
+
+    keyboard = [[InlineKeyboardButton(t('main_menu.button.products', lang),
+                                      callback_data="products")]]
+    keyboard += two_column_rows(middle)
+    keyboard.append([InlineKeyboardButton(t('main_menu.button.language', lang),
+                                          callback_data="language")])
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -246,6 +259,7 @@ def create_admin_settings_menu_keyboard():
         InlineKeyboardButton("🖼 Store Logo", callback_data="admin_store_logo"),
         InlineKeyboardButton("📞 Support Username", callback_data="admin_support_username"),
         InlineKeyboardButton("📢 Channel Username", callback_data="admin_channel_username"),
+        InlineKeyboardButton("📜 Terms & FAQ", callback_data="admin_terms"),
     ], "🔙 Back", "admin_menu")
 
 

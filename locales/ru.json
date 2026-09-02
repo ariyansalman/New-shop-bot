@@ -17,5 +17,18 @@
   "purchase.button.topup_wallet": "💰 Пополнить кошелёк",
   "purchase.banned": "⛔ Вам заблокирован доступ к этому боту.",
   "language.prompt": "🌐 Выберите язык, который хотите использовать.",
-  "language.saved": "✅ Выбран русский язык."
+  "language.saved": "✅ Выбран русский язык.",
+  "main_menu.button.terms": "📜 Условия и FAQ",
+  "wallet.title": "💰 КОШЕЛЁК",
+  "wallet.balance": "Баланс: {balance}",
+  "wallet.in_progress": "⏳ В обработке",
+  "wallet.recent": "📋 Последние пополнения",
+  "wallet.empty": "Пополнений пока нет.",
+  "wallet.status.pending": "ожидает оплаты",
+  "wallet.status.verifying": "проверяем ваш платёж",
+  "wallet.status.completed": "зачислено на баланс",
+  "wallet.status.failed": "не удалось",
+  "wallet.status.expired": "истёк срок",
+  "wallet.status.manual_review": "на проверке у нашей команды",
+  "common.back": "🔙 Назад"
 }

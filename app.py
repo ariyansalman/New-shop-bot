@@ -34,7 +34,7 @@ from database.init_data import initialize_database      # noqa: E402
 from telegram import Update                              # noqa: E402
 import bot as bot_module                                # noqa: E402
 import webhook_server                                   # noqa: E402
-from services import payment_methods                    # noqa: E402
+from services import payment_methods, store_content                    # noqa: E402
 
 
 def _make_threadsafe_notifier(application, loop):
@@ -81,6 +81,7 @@ def main():
     #     served. They are read by keyboard builders on the event loop, so
     #     they must never hit the database themselves.
     payment_methods.refresh()
+    store_content.refresh()
 
     # 3. Make sure the asset directories exist (a Railway Volume mounts empty).
     for directory in (settings.ASSETS_DIR, settings.LOGOS_DIR, settings.PRODUCTS_DIR):

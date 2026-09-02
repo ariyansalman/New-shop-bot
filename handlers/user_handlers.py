@@ -15,7 +15,11 @@ network round trip rather than a local file read.
 import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from database import get_db_session, User, Category, Subcategory, Product, Order, OrderItem, Settings, ProductType, OrderStatus, DisputeStatus
+from database import (
+    get_db_session, User, Category, Subcategory, Product, Order, OrderItem,
+    Settings, Transaction, ProductType, OrderStatus, DisputeStatus,
+    TransactionStatus, PaymentMethod,
+)
 from utils import (
     format_price, format_datetime, create_main_menu_keyboard,
     create_pagination_keyboard, create_product_detail_keyboard,
@@ -120,6 +124,139 @@ async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         message,
         reply_markup=create_main_menu_keyboard(lang)
     )
+
+
+# How many past top-ups the wallet lists. Enough to recognise a payment,
+# short enough that the screen stays one glance.
+_WALLET_HISTORY = 5
+
+# Statuses that are still going somewhere, so the customer is told to wait
+# rather than shown a finished-looking row.
+_IN_PROGRESS = (TransactionStatus.PENDING, TransactionStatus.VERIFYING,
+                TransactionStatus.MANUAL_REVIEW)
+
+_STATUS_KEY = {
+    TransactionStatus.PENDING: 'wallet.status.pending',
+    TransactionStatus.VERIFYING: 'wallet.status.verifying',
+    TransactionStatus.COMPLETED: 'wallet.status.completed',
+    TransactionStatus.FAILED: 'wallet.status.failed',
+    TransactionStatus.EXPIRED: 'wallet.status.expired',
+    TransactionStatus.MANUAL_REVIEW: 'wallet.status.manual_review',
+}
+
+_STATUS_ICON = {
+    TransactionStatus.PENDING: "⏳",
+    TransactionStatus.VERIFYING: "🔄",
+    TransactionStatus.COMPLETED: "✅",
+    TransactionStatus.FAILED: "❌",
+    TransactionStatus.EXPIRED: "⌛",
+    TransactionStatus.MANUAL_REVIEW: "🟡",
+}
+
+_METHOD_LABEL = {
+    PaymentMethod.CRYPTO_WALLET: "CryptoBot",
+    PaymentMethod.CARD: "Card",
+    PaymentMethod.BINANCE_PAY: "Binance Pay",
+}
+
+
+async def wallet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Balance, payments still in flight, and recent top-ups.
+
+    The gap this closes: a customer who has paid and is waiting had nowhere
+    to look. Order History shows orders, not payments, so a Binance top-up
+    sitting in VERIFYING or MANUAL_REVIEW was invisible to the person who
+    sent the money - and every one of those becomes a support message.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+    if await check_user_banned_async(user_id):
+        await query.edit_message_text(t('purchase.banned'))
+        return
+
+    def _sync():
+        with get_db_session() as session:
+            db_user = session.query(User).filter_by(telegram_id=user_id).first()
+            if not db_user:
+                return None
+
+            rows = (session.query(Transaction)
+                    .filter_by(user_id=db_user.id)
+                    .order_by(Transaction.created_at.desc())
+                    .limit(_WALLET_HISTORY * 2)
+                    .all())
+
+            return db_user.wallet_balance, db_user.language, [
+                (txn.status, txn.payment_method, txn.amount, txn.created_at)
+                for txn in rows
+            ]
+
+    result = await asyncio.to_thread(_sync)
+    if result is None:
+        await query.edit_message_text("❌ User not found.")
+        return
+    balance, lang, transactions = result
+
+    lines = [t('wallet.title', lang),
+             "━━━━━━━━━━━━━━━━━━━━━━━━", "",
+             t('wallet.balance', lang, balance=format_price(balance)), ""]
+
+    def row(status, method, amount, created_at):
+        when = format_datetime(created_at) if created_at else ""
+        return (f"{_STATUS_ICON.get(status, '•')} {format_price(amount)} · "
+                f"{_METHOD_LABEL.get(method, '')} · {t(_STATUS_KEY[status], lang)}"
+                + (f" · {when}" if when else ""))
+
+    active = [x for x in transactions if x[0] in _IN_PROGRESS]
+    if active:
+        lines.append(t('wallet.in_progress', lang))
+        lines += [f"   {row(*x)}" for x in active]
+        lines.append("")
+
+    settled = [x for x in transactions if x[0] not in _IN_PROGRESS][:_WALLET_HISTORY]
+    lines.append(t('wallet.recent', lang))
+    if settled:
+        lines += [f"   {row(*x)}" for x in settled]
+    else:
+        lines.append(f"   {t('wallet.empty', lang)}")
+
+    lines += ["", "━━━━━━━━━━━━━━━━━━━━━━━━"]
+
+    keyboard = [[InlineKeyboardButton(t('main_menu.button.topup', lang),
+                                      callback_data="topup")],
+                [InlineKeyboardButton(t('common.back', lang),
+                                      callback_data="main_menu")]]
+
+    await query.edit_message_text("\n".join(lines),
+                                  reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def terms_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """The store's own rules, as the admin wrote them."""
+    query = update.callback_query
+    await query.answer()
+
+    def _sync():
+        with get_db_session() as session:
+            store = session.query(Settings).first()
+            lang = session.query(User.language).filter_by(
+                telegram_id=update.effective_user.id).scalar()
+            return (store.terms_text if store else None), lang or DEFAULT_LANG
+
+    terms, lang = await asyncio.to_thread(_sync)
+
+    # The button is hidden when there are no terms, so this only happens on
+    # a stale keyboard - answer it rather than showing an empty screen.
+    text = terms or t('wallet.empty', lang)
+
+    await query.edit_message_text(
+        f"{t('main_menu.button.terms', lang)}\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{text}",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton(t('common.back', lang), callback_data="main_menu")]]))
 
 
 async def language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):

@@ -177,7 +177,8 @@ def test_the_main_menu_language_button_opens_the_picker(code):
     """It used to toggle between two languages; with ten there is no
     single "other one" to offer."""
     targets = [b.callback_data for row in
-               create_main_menu_keyboard(code).inline_keyboard for b in row]
+               create_main_menu_keyboard(code, has_terms=True).inline_keyboard
+               for b in row]
 
     assert "language" in targets
     assert not any(d.startswith("set_lang_") for d in targets)
@@ -185,13 +186,16 @@ def test_the_main_menu_language_button_opens_the_picker(code):
 
 @pytest.mark.parametrize("code", EXPECTED)
 def test_the_main_menu_is_translated(code):
-    labels = [b.text for row in create_main_menu_keyboard(code).inline_keyboard
+    labels = [b.text for row in
+              create_main_menu_keyboard(code, has_terms=True).inline_keyboard
               for b in row]
 
     assert labels == [t(key, code) for key in (
-        'main_menu.button.products', 'main_menu.button.topup',
-        'main_menu.button.order_history', 'main_menu.button.availability',
-        'main_menu.button.support', 'main_menu.button.language')]
+        'main_menu.button.products',
+        'main_menu.button.wallet', 'main_menu.button.order_history',
+        'main_menu.button.topup', 'main_menu.button.availability',
+        'main_menu.button.support', 'main_menu.button.terms',
+        'main_menu.button.language')]
 
 
 def test_locale_files_have_no_stray_ascii_placeholders():

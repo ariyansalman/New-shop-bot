@@ -286,6 +286,13 @@ class Settings(Base):
     store_logo_path = Column(String(500), nullable=True)
     support_username = Column(String(255), nullable=True)
     channel_username = Column(String(255), nullable=True)
+    # The store's own rules, shown to customers under Terms & FAQ: refund
+    # policy, warranty period, delivery expectations, what makes a dispute
+    # valid. Empty by default - the bot must not invent a policy on the
+    # store's behalf, so the menu button stays hidden until an admin
+    # writes one.
+    terms_text = Column(Text, nullable=True)
+
     # Admin switches for the top-up methods. NULL means no admin has
     # decided, in which case the method's environment variable supplies the
     # answer; see services/payment_methods.py, which owns all three.
