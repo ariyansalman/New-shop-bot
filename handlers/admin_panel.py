@@ -33,6 +33,7 @@ from database import (
     UNLIMITED_STOCK,
 )
 from services import payment_methods
+from utils.admin_ui import deny_if_not_admin
 from utils import is_admin, format_price, two_column_rows
 from utils.money import to_money
 
@@ -72,18 +73,6 @@ def _screen(title: str, lines=(), buttons=(), back="admin_menu",
     keyboard += [list(row) for row in extra_rows]
     keyboard.append([InlineKeyboardButton("◀️ Back", callback_data=back)])
     return "\n".join(text), InlineKeyboardMarkup(keyboard)
-
-
-async def _deny(update: Update) -> bool:
-    """Refuse a non-admin, before answering the callback.
-
-    Telegram accepts one answer per callback and drops the rest, so this
-    has to answer first or the alert never appears.
-    """
-    if is_admin(update.effective_user.id):
-        return False
-    await update.callback_query.answer("⛔ Access denied.", show_alert=True)
-    return True
 
 
 # ======================================================================
@@ -480,7 +469,7 @@ def admin_panel_main_markup():
 async def admin_panel_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """The Admin Panel main menu."""
     query = update.callback_query
-    if await _deny(update):
+    if await deny_if_not_admin(update):
         return
     await query.answer()
 
@@ -491,7 +480,7 @@ async def admin_panel_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_panel_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Any section screen (callback_data: apanel_<key>)."""
     query = update.callback_query
-    if await _deny(update):
+    if await deny_if_not_admin(update):
         return
 
     key = query.data[len("apanel_"):]
@@ -524,7 +513,7 @@ _REPORT_WINDOWS = {
 async def admin_panel_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """One report window (apanel_rep_daily | weekly | monthly)."""
     query = update.callback_query
-    if await _deny(update):
+    if await deny_if_not_admin(update):
         return
 
     key = query.data[len("apanel_rep_"):]
@@ -610,7 +599,7 @@ async def admin_panel_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mis-tap easy.
     """
     query = update.callback_query
-    if await _deny(update):
+    if await deny_if_not_admin(update):
         return
     await query.answer()
 
@@ -763,7 +752,7 @@ def _audience_sync() -> dict:
 async def admin_panel_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """The read-only figure screens hung off Referrals, Wallet and Broadcast."""
     query = update.callback_query
-    if await _deny(update):
+    if await deny_if_not_admin(update):
         return
     await query.answer()
 

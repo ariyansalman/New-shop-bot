@@ -130,7 +130,12 @@ def process_invoice_paid(invoice_data: dict):
                              invoice_id, invoice_amount, transaction.amount)
                 return
 
-            user = session.query(User).filter_by(id=transaction.user_id).first()
+            # Locked for the same reason as in the poller: the
+            # transaction lock above stops this invoice being credited
+            # twice, but two invoices for one user arriving together would
+            # both read the old balance and lose one of the credits.
+            user = (session.query(User).filter_by(id=transaction.user_id)
+                    .with_for_update().first())
             if not user:
                 logger.error("User missing for transaction %s", transaction.id)
                 return

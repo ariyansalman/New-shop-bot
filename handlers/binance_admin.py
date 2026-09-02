@@ -34,7 +34,8 @@ from config.settings import settings
 from handlers import binance_pay_handlers as bp
 from services import payment_methods
 from services.binance_pay import get_service
-from utils import is_admin, notify_admin
+from utils.admin_ui import deny_if_not_admin, mask_secret
+from utils import notify_admin
 from utils.audit import log_admin_action
 
 logger = logging.getLogger(__name__)
@@ -51,27 +52,6 @@ _FILTERS = [
 _FILTER_BY_KEY = {key: (label, status) for key, label, status in _FILTERS}
 
 _PAGE_SIZE = 8
-
-
-async def _deny(update: Update) -> bool:
-    """Answer with the access-denied alert. Returns True when denied.
-
-    Authorization happens before query.answer(), because Telegram rejects a
-    second answer for the same callback and the alert would never appear.
-    """
-    if is_admin(update.effective_user.id):
-        return False
-    await update.callback_query.answer("⛔ Access denied.", show_alert=True)
-    return True
-
-
-def _mask(value: str) -> str:
-    """Report that a secret is set without disclosing it."""
-    if not value:
-        return "❌ not set"
-    if len(value) <= 4:
-        return "✅ set"
-    return f"✅ set (…{value[-4:]})"
 
 
 def _missing_credentials() -> list:
@@ -112,8 +92,8 @@ def _settings_text() -> str:
         f"Status: {state}",
         "",
         "🔐 CREDENTIALS (environment only)",
-        f"• API Key: {_mask(settings.BINANCE_API_KEY)}",
-        f"• API Secret: {_mask(settings.BINANCE_API_SECRET)}",
+        f"• API Key: {mask_secret(settings.BINANCE_API_KEY)}",
+        f"• API Secret: {mask_secret(settings.BINANCE_API_SECRET)}",
         f"• Pay ID: {settings.BINANCE_PAY_ID or '❌ not set'}",
         f"• Currency: {settings.BINANCE_PAY_CURRENCY}",
         "",
@@ -162,7 +142,7 @@ def _settings_keyboard():
 async def binance_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Binance Pay settings screen."""
     query = update.callback_query
-    if await _deny(update):
+    if await deny_if_not_admin(update):
         return
     await query.answer()
 
@@ -183,7 +163,7 @@ async def binance_admin_toggle(update: Update, context: ContextTypes.DEFAULT_TYP
     happen - which is exactly how this button used to fail.
     """
     query = update.callback_query
-    if await _deny(update):
+    if await deny_if_not_admin(update):
         return
 
     if not bp.binance_configured():
@@ -210,7 +190,7 @@ async def binance_admin_toggle(update: Update, context: ContextTypes.DEFAULT_TYP
 async def binance_admin_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Make one read-only call to Binance and report whether it worked."""
     query = update.callback_query
-    if await _deny(update):
+    if await deny_if_not_admin(update):
         return
 
     if not bp.binance_configured():
@@ -285,7 +265,7 @@ def _filter_keyboard(active_key: str, counts: dict):
 async def binance_admin_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """List Binance transactions in one status."""
     query = update.callback_query
-    if await _deny(update):
+    if await deny_if_not_admin(update):
         return
     await query.answer()
 
@@ -388,7 +368,7 @@ async def binance_admin_retry(update: Update, context: ContextTypes.DEFAULT_TYPE
     cannot produce a credit the automatic path would have refused.
     """
     query = update.callback_query
-    if await _deny(update):
+    if await deny_if_not_admin(update):
         return
 
     try:
@@ -481,7 +461,7 @@ async def binance_admin_close(update: Update, context: ContextTypes.DEFAULT_TYPE
     is not reachable from here.
     """
     query = update.callback_query
-    if await _deny(update):
+    if await deny_if_not_admin(update):
         return
 
     try:

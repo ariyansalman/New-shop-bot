@@ -23,23 +23,10 @@ from telegram.ext import ContextTypes
 
 from config.settings import settings
 from services import payment_methods
-from utils import is_admin
+from utils.admin_ui import deny_if_not_admin, mask_secret
 from utils.keyboards import two_column_rows
 
 logger = logging.getLogger(__name__)
-
-
-async def _deny(update: Update) -> bool:
-    """Answer with the access-denied alert. Returns True when denied.
-
-    Authorization answers the callback itself, before any other answer:
-    Telegram accepts one answer per callback and discards the rest, so a
-    handler that answers first would make this alert invisible.
-    """
-    if is_admin(update.effective_user.id):
-        return False
-    await update.callback_query.answer("⛔ Access denied.", show_alert=True)
-    return True
 
 
 def _state_line(spec) -> str:
@@ -97,7 +84,7 @@ def _hub_keyboard():
 async def payments_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """The Payments hub."""
     query = update.callback_query
-    if await _deny(update):
+    if await deny_if_not_admin(update):
         return
     await query.answer()
 
@@ -119,9 +106,9 @@ def _method_text(spec) -> str:
 
     lines.append("🔐 CONFIGURATION (environment only)")
     if spec.key == "crypto":
-        lines.append(f"• API key: {_mask(settings.CRYPTO_BOT_API_KEY)}")
+        lines.append(f"• API key: {mask_secret(settings.CRYPTO_BOT_API_KEY)}")
     elif spec.key == "card":
-        lines.append(f"• Provider token: {_mask(settings.TELEGRAM_PROVIDER_TOKEN)}")
+        lines.append(f"• Provider token: {mask_secret(settings.TELEGRAM_PROVIDER_TOKEN)}")
         lines.append(f"• Currency: {settings.PAYMENT_CURRENCY}")
 
     if spec.notes:
@@ -135,15 +122,6 @@ def _method_text(spec) -> str:
               "",
               "━━━━━━━━━━━━━━━━━━━━━━━━"]
     return "\n".join(lines)
-
-
-def _mask(value: str) -> str:
-    """Report that a secret is set without disclosing it."""
-    if not value:
-        return "❌ not set"
-    if len(value) <= 4:
-        return "✅ set"
-    return f"✅ set (…{value[-4:]})"
 
 
 def _method_keyboard(spec):
@@ -163,7 +141,7 @@ def _spec_from(query_data: str, prefix: str):
 async def payment_method_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """One method's screen."""
     query = update.callback_query
-    if await _deny(update):
+    if await deny_if_not_admin(update):
         return
 
     spec = _spec_from(query.data, "payadmin_")
@@ -187,7 +165,7 @@ async def payment_method_toggle(update: Update, context: ContextTypes.DEFAULT_TY
     and the button looks dead.
     """
     query = update.callback_query
-    if await _deny(update):
+    if await deny_if_not_admin(update):
         return
 
     spec = _spec_from(query.data, "payadmin_toggle_")

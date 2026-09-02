@@ -398,10 +398,14 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
 
     def _sync():
         with get_db_session() as session:
+            # Locked before the status is read, not after: the check and
+            # the credit have to be one atomic step. Telegram retries a
+            # successful_payment update it thinks was not acknowledged, and
+            # two unlocked runs would both see PENDING and both credit.
             transaction = session.query(Transaction).filter_by(
                 id=transaction_id,
                 payment_method=PaymentMethod.CARD
-            ).first()
+            ).with_for_update().first()
 
             if not transaction:
                 return None
@@ -415,7 +419,8 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
             # Store Telegram's charge id in crypto_address for reference.
             transaction.crypto_address = f"tg_charge:{payment.telegram_payment_charge_id}"
 
-            user = session.query(User).filter_by(id=transaction.user_id).first()
+            user = (session.query(User).filter_by(id=transaction.user_id)
+                    .with_for_update().first())
             if user:
                 user.wallet_balance = to_money(user.wallet_balance + transaction.amount)
                 session.commit()
@@ -527,8 +532,14 @@ async def check_pending_payments(context: ContextTypes.DEFAULT_TYPE):
                     locked_txn.status = TransactionStatus.COMPLETED
                     locked_txn.completed_at = datetime.utcnow()
 
-                    # Update user wallet balance
-                    user = session.query(User).filter_by(id=locked_txn.user_id).first()
+                    # Lock the user too, not just the transaction. The
+                    # transaction lock stops THIS payment being credited
+                    # twice; it does nothing about two different payments
+                    # for the same person landing together, where both
+                    # read the old balance and the second write erases the
+                    # first.
+                    user = (session.query(User).filter_by(id=locked_txn.user_id)
+                            .with_for_update().first())
                     if user:
                         user.wallet_balance = to_money(user.wallet_balance + locked_txn.amount)
                         session.commit()

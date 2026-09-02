@@ -993,13 +993,17 @@ async def admin_reactivate_order_callback(update: Update, context: ContextTypes.
 
     def _sync():
         with get_db_session() as session:
-            order = session.query(Order).filter_by(id=order_id).first()
+            # Locked for the same reason the cancel path is: this debits a
+            # refund back out, and a double tap would debit twice.
+            order = (session.query(Order).filter_by(id=order_id)
+                     .with_for_update().first())
             if not order:
                 return "not_found"
             if order.status != OrderStatus.CANCELLED:
                 return "not_cancelled"
 
-            user = session.query(User).filter_by(id=order.user_id).first()
+            user = (session.query(User).filter_by(id=order.user_id)
+                    .with_for_update().first())
             if not user or user.wallet_balance < order.total_amount:
                 return "insufficient"
 
@@ -1174,7 +1178,12 @@ async def admin_confirm_payment_callback(update: Update, context: ContextTypes.D
 
     def _sync():
         with get_db_session() as session:
-            txn = session.query(Transaction).filter_by(id=txn_id).first()
+            # Locked before the status is read: the check and the credit
+            # have to be one atomic step, or a double-tapped Confirm runs
+            # twice, both runs see PENDING, and the wallet is credited
+            # twice. Every other money path here already locks.
+            txn = (session.query(Transaction).filter_by(id=txn_id)
+                   .with_for_update().first())
 
             if not txn:
                 return "not_found", None
@@ -1182,7 +1191,8 @@ async def admin_confirm_payment_callback(update: Update, context: ContextTypes.D
             if txn.status != TransactionStatus.PENDING:
                 return "already", txn.status.value
 
-            user = session.query(User).filter_by(id=txn.user_id).first()
+            user = (session.query(User).filter_by(id=txn.user_id)
+                    .with_for_update().first())
             if user:
                 user.wallet_balance = to_money(user.wallet_balance + txn.amount)
 
@@ -1300,7 +1310,12 @@ async def admin_cancel_order_callback(update: Update, context: ContextTypes.DEFA
 
     def _sync():
         with get_db_session() as session:
-            order = session.query(Order).filter_by(id=order_id).first()
+            # Locked before the status is read. The guard below is only a
+            # guard if nothing else can read the same row between the check
+            # and the write - a double-tapped Cancel is two concurrent
+            # updates, and both would refund.
+            order = (session.query(Order).filter_by(id=order_id)
+                     .with_for_update().first())
 
             if not order:
                 return "not_found", None
@@ -1311,7 +1326,8 @@ async def admin_cancel_order_callback(update: Update, context: ContextTypes.DEFA
                 return "already", None
 
             # Refund user
-            user = session.query(User).filter_by(id=order.user_id).first()
+            user = (session.query(User).filter_by(id=order.user_id)
+                    .with_for_update().first())
             if user:
                 user.wallet_balance = to_money(user.wallet_balance + order.total_amount)
 
