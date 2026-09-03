@@ -7,7 +7,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 from database import (
     get_db_session
 )
-from utils import is_admin
+from utils import is_admin, broadcast
 
 logger = logging.getLogger(__name__)
 
@@ -61,28 +61,12 @@ async def broadcast_text_message(update: Update, context: ContextTypes.DEFAULT_T
         context.user_data.clear()
         return ConversationHandler.END
 
-    # Send broadcast to all users with rate limiting
-    success_count = 0
-    fail_count = 0
+    # utils.broadcast paces the run, waits out Telegram's flood control
+    # rather than counting it as a failure, and splits a message too long
+    # for one send.
+    result = await broadcast(context.bot, recipient_ids, message_text)
 
-    for telegram_id in recipient_ids:
-        try:
-            await context.bot.send_message(
-                chat_id=telegram_id,
-                text=message_text
-            )
-            success_count += 1
-            # Rate limiting: 50ms delay = ~20 messages/second (well under Telegram's 30/sec limit)
-            await asyncio.sleep(0.05)
-        except Exception:
-            fail_count += 1
-
-    # Show results
-    result_msg = "✅ Broadcast Complete!\n\n"
-    result_msg += "📊 Results:\n"
-    result_msg += f"✅ Sent successfully: {success_count}\n"
-    result_msg += f"❌ Failed: {fail_count}\n"
-    result_msg += f"👥 Total users: {len(recipient_ids)}"
+    result_msg = "✅ Broadcast Complete!\n\n📊 Results:\n" + result.summary()
 
     await update.message.reply_text(
         result_msg,
@@ -161,38 +145,12 @@ async def broadcast_image_text(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data.clear()
         return ConversationHandler.END
 
-    # Send broadcast to all users with rate limiting
-    success_count = 0
-    fail_count = 0
+    # The image goes first, then the text, to the same chat. A recipient
+    # who fails at either step is counted once, by whatever stopped them.
+    result = await broadcast(context.bot, recipient_ids, caption_text,
+                             photo=image_file_id)
 
-    for telegram_id in recipient_ids:
-        try:
-            # Send image first
-            await context.bot.send_photo(
-                chat_id=telegram_id,
-                photo=image_file_id
-            )
-            # Small delay between image and text
-            await asyncio.sleep(0.03)
-
-            # Then send text as separate message
-            await context.bot.send_message(
-                chat_id=telegram_id,
-                text=caption_text
-            )
-            success_count += 1
-
-            # Rate limiting: 50ms delay = ~20 messages/second (well under Telegram's 30/sec limit)
-            await asyncio.sleep(0.05)
-        except Exception:
-            fail_count += 1
-
-    # Show results
-    result_msg = "✅ Broadcast Complete!\n\n"
-    result_msg += "📊 Results:\n"
-    result_msg += f"✅ Sent successfully: {success_count}\n"
-    result_msg += f"❌ Failed: {fail_count}\n"
-    result_msg += f"👥 Total users: {len(recipient_ids)}"
+    result_msg = "✅ Broadcast Complete!\n\n📊 Results:\n" + result.summary()
 
     await update.message.reply_text(
         result_msg,

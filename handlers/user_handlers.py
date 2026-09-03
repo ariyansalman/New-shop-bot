@@ -905,10 +905,10 @@ async def availability_callback(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return
 
-    await query.edit_message_text(
-        text,
-        reply_markup=create_back_support_keyboard()
-    )
+    # Fifteen products per category across ten categories is over 7,000
+    # characters, which Telegram refuses outright - the button did nothing
+    # on any store that had grown that far.
+    await edit_or_split(query, text, create_back_support_keyboard())
 
 
 async def support_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):

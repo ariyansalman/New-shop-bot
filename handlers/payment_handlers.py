@@ -31,7 +31,7 @@ from utils import (
     payment_methods_available,
     create_quantity_keyboard, create_main_menu_keyboard,
     calculate_expiry_time, notify_admin, check_user_banned_async,
-    t, DEFAULT_LANG, edit_or_split,
+    t, DEFAULT_LANG, edit_or_split, broadcast,
 )
 from config.settings import settings as app_settings
 from services.crypto_bot import CryptoBotService
@@ -1132,36 +1132,22 @@ async def broadcast_availability_to_all_users(context: ContextTypes.DEFAULT_TYPE
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # Send to all users with rate limiting
-    success_count = 0
-    fail_count = 0
+    # This text lists up to fifteen products for every category, so a store
+    # with ten categories builds 7,281 characters - past what Telegram will
+    # accept. Every send used to be refused and logged at debug level as
+    # though each user had blocked the bot, meaning the store broadcast to
+    # nobody and nothing said so. utils.broadcast splits it instead.
+    result = await broadcast(context.bot, user_ids, availability_text,
+                             reply_markup=reply_markup)
 
-    for telegram_id in user_ids:
-        try:
-            await context.bot.send_message(
-                chat_id=telegram_id,
-                text=availability_text,
-                reply_markup=reply_markup
-            )
-            success_count += 1
-
-            # Rate limiting: 50ms delay = ~20 messages/second (well under Telegram's 30/sec limit)
-            await asyncio.sleep(0.05)
-        except Exception as e:
-            # User may have blocked the bot
-            logger.debug(f"Failed to send to {telegram_id}: {e}")
-            fail_count += 1
-
-    logger.info(f"Availability broadcast complete: {success_count} sent, {fail_count} failed")
+    logger.info(
+        "Availability broadcast complete: %d sent, %d blocked, %d failed",
+        result.sent, result.blocked, result.failed)
 
     # Notify admin about broadcast completion
     try:
         from utils import notify_admin
-        admin_message = f"""📢 Availability Broadcast Complete
-
-✅ Sent successfully: {success_count}
-❌ Failed: {fail_count}
-👥 Total users: {len(user_ids)}"""
+        admin_message = "📢 Availability Broadcast Complete\n\n" + result.summary()
 
         await notify_admin(context, admin_message)
     except Exception as e:
