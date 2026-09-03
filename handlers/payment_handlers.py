@@ -21,6 +21,7 @@ import logging
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
 from telegram.ext import ContextTypes, ConversationHandler
+from telegram.error import BadRequest
 from database import (
     get_db_session, User, Transaction, Order, OrderItem, Product,
     ProductKey, TransactionStatus, OrderStatus, PaymentMethod, ProductType
@@ -31,7 +32,7 @@ from utils import (
     payment_methods_available,
     create_quantity_keyboard, create_main_menu_keyboard,
     calculate_expiry_time, notify_admin, check_user_banned_async,
-    t, DEFAULT_LANG, edit_or_split, broadcast,
+    t, DEFAULT_LANG, edit_or_split, broadcast, notify_user,
 )
 from config.settings import settings as app_settings
 from services.crypto_bot import CryptoBotService
@@ -327,8 +328,10 @@ async def payment_method_card(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 Please complete the secure card payment below 👇"""
         )
-    except Exception:
-        pass
+    except BadRequest as error:
+        # Cosmetic: the invoice follows regardless. Only "not modified" is
+        # expected, and swallowing anything else would hide a real failure.
+        logger.warning("Could not replace the card checkout message: %s", error)
 
     # Telegram expects the price in the smallest currency unit (e.g. cents for USD).
     # usd_amount is already cent-quantized (validate_amount -> to_money), so
@@ -568,13 +571,8 @@ async def check_pending_payments(context: ContextTypes.DEFAULT_TYPE):
 
 Thank you for your payment!"""
 
-        try:
-            await context.bot.send_message(
-                chat_id=notif['user_telegram_id'],
-                text=user_message
-            )
-        except Exception:
-            pass
+        reached = await notify_user(
+            context.bot, notif['user_telegram_id'], user_message)
 
         # Notify admin
         admin_message = f"""💰 New Payment Received
@@ -583,6 +581,10 @@ Thank you for your payment!"""
 💰 Amount: {format_price(notif['amount'])}
 📝 Transaction ID: #{notif['transaction_id']}
 🔄 Payment Method: {notif['payment_method']}"""
+        if not reached:
+            # The credit stands; the customer just did not hear about it,
+            # and that is what turns into a support ticket later.
+            admin_message += "\n⚠️ The customer could not be notified."
 
         await notify_admin(context, admin_message)
 

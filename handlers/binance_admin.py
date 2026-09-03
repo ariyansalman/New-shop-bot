@@ -35,7 +35,7 @@ from handlers import binance_pay_handlers as bp
 from services import payment_methods
 from services.binance_pay import get_service
 from utils.admin_ui import deny_if_not_admin, mask_secret
-from utils import notify_admin
+from utils import notify_admin, notify_user, UNREACHABLE
 from utils.audit import log_admin_action
 
 logger = logging.getLogger(__name__)
@@ -435,17 +435,16 @@ async def binance_admin_retry(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     settled = user_text.startswith("✅") or user_text.startswith("❌")
+    reached = True
     if settled and user_telegram_id:
-        try:
-            await context.bot.send_message(chat_id=user_telegram_id, text=user_text)
-        except Exception:
-            pass
+        reached = await notify_user(context.bot, user_telegram_id, user_text)
 
     if admin_text:
         await notify_admin(context, admin_text)
 
     await query.edit_message_text(
-        f"Result for #{transaction_id}:\n\n{user_text}",
+        f"Result for #{transaction_id}:\n\n{user_text}"
+        + ("" if reached else UNREACHABLE),
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("📊 Payment Monitoring",
                                   callback_data="binadmin_mon_pending_0")],

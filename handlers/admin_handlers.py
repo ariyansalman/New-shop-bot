@@ -28,9 +28,11 @@ from utils import (
     create_admin_product_menu_keyboard, edit_or_split,
     create_admin_category_menu_keyboard, create_admin_user_menu_keyboard,
     create_admin_order_menu_keyboard, create_admin_settings_menu_keyboard,
-    create_admin_broadcast_menu_keyboard, parse_keys_from_text, clear_ban_cache
+    create_admin_broadcast_menu_keyboard, parse_keys_from_text, clear_ban_cache,
+    notify_user, UNREACHABLE,
 )
 from telegram.ext import ConversationHandler
+from telegram.error import BadRequest
 
 # Conversation states for restock keys
 WAITING_FOR_KEYS = 1
@@ -1115,9 +1117,13 @@ async def _render_pending_txn_menu(query, action: str):
     if not rows:
         text = "✅ No pending payments to confirm." if is_confirm else "✅ No pending payments to cancel."
         try:
+            # Only "message is not modified" is expected here - re-tapping
+            # the same menu. Catching everything also hid a message too
+            # long to send, which is a real failure worth seeing.
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(back))
-        except Exception:
-            pass
+        except BadRequest as error:
+            if "not modified" not in str(error).lower():
+                raise
         return
 
     keyboard = []
@@ -1135,8 +1141,9 @@ async def _render_pending_txn_menu(query, action: str):
 
     try:
         await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
-    except Exception:
-        pass
+    except BadRequest as error:
+        if "not modified" not in str(error).lower():
+            raise
 
 
 async def admin_confirm_order_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1222,13 +1229,15 @@ async def admin_confirm_payment_callback(update: Update, context: ContextTypes.D
 
     if notify:
         telegram_id, amount, new_balance = notify
-        try:
-            await context.bot.send_message(
-                chat_id=telegram_id,
-                text=f"✅ Payment Confirmed!\n\n💰 Amount: {format_price(amount)}\n💵 New Balance: {format_price(new_balance)}"
-            )
-        except Exception:
-            pass
+        # The credit already happened; a customer who blocked the bot must
+        # not undo it. But the admin needs to know they were not told.
+        reached = await notify_user(
+            context.bot, telegram_id,
+            f"✅ Payment Confirmed!\n\n💰 Amount: {format_price(amount)}\n"
+            f"💵 New Balance: {format_price(new_balance)}")
+        if not reached:
+            await query.message.reply_text(
+                f"✅ Payment confirmed: {format_price(amount)}." + UNREACHABLE)
 
     await _render_pending_txn_menu(query, "confirm")
 
@@ -1280,13 +1289,14 @@ async def admin_cancel_payment_callback(update: Update, context: ContextTypes.DE
 
     if payload:
         telegram_id, amount = payload
-        try:
-            await context.bot.send_message(
-                chat_id=telegram_id,
-                text=f"❌ Payment Cancelled\n\n💰 Amount: {format_price(amount)}\n\nYour payment was not confirmed. Please contact support if you believe this is an error."
-            )
-        except Exception:
-            pass
+        reached = await notify_user(
+            context.bot, telegram_id,
+            f"❌ Payment Cancelled\n\n💰 Amount: {format_price(amount)}\n\n"
+            "Your payment was not confirmed. Please contact support if you "
+            "believe this is an error.")
+        if not reached:
+            await query.message.reply_text(
+                f"❌ Payment cancelled: {format_price(amount)}." + UNREACHABLE)
 
     await _render_pending_txn_menu(query, "cancel")
 
@@ -1363,13 +1373,16 @@ async def admin_cancel_order_callback(update: Update, context: ContextTypes.DEFA
 
     if notify:
         telegram_id, oid, amount = notify
-        try:
-            await context.bot.send_message(
-                chat_id=telegram_id,
-                text=f"❌ Order #{oid} has been cancelled by admin.\n💰 Refund: {format_price(amount)}"
-            )
-        except Exception:
-            pass
+        # The refund is already in their wallet either way - this only
+        # decides whether they hear about it from us or find it themselves.
+        reached = await notify_user(
+            context.bot, telegram_id,
+            f"❌ Order #{oid} has been cancelled by admin.\n"
+            f"💰 Refund: {format_price(amount)}")
+        if not reached:
+            await query.message.reply_text(
+                f"❌ Order #{oid} cancelled, {format_price(amount)} refunded."
+                + UNREACHABLE)
 
     # Refresh order details (query.answer() already fired above)
     await _render_order_detail(query, order_id)
