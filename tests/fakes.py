@@ -21,7 +21,18 @@ class FakeQuery:
         class _Msg:
             photo = message_has_photo
 
-        self.message = _Msg()
+            def __init__(self, parent):
+                self._parent = parent
+
+            async def reply_text(self, text, reply_markup=None, **kwargs):
+                # A long answer continues into follow-up messages; record
+                # them on the query so a test sees the whole thing.
+                self._parent.edits.append((text, reply_markup))
+
+            async def delete(self):
+                pass
+
+        self.message = _Msg(self)
 
     async def answer(self, text: str = None, **kwargs):
         self.answers.append((text, kwargs))

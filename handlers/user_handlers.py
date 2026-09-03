@@ -30,7 +30,7 @@ from utils import (
     paginate_items, format_product_display, build_availability_text,
     create_back_support_keyboard, t, SUPPORTED_LANGS, DEFAULT_LANG,
     create_language_keyboard, create_terms_menu_keyboard, is_admin,
-    format_stock, read_image_bytes,
+    format_stock, read_image_bytes, edit_or_split,
 )
 
 
@@ -1098,7 +1098,10 @@ async def user_order_detail_callback(update: Update, context: ContextTypes.DEFAU
         return
 
     message, reply_markup = payload
-    await query.edit_message_text(message, reply_markup=reply_markup)
+    # An order of many keys lists them all here, so this is the second
+    # place a bulk purchase becomes unreadable - and the fallback the
+    # customer is told to use when the delivery message is long.
+    await edit_or_split(query, message, reply_markup)
 
 
 async def back_to_products_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):

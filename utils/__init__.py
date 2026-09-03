@@ -3,6 +3,9 @@
 from .money import to_money, money_or_none
 from .audit import log_admin_action
 from .i18n import t, DEFAULT_LANG, SUPPORTED_LANGS
+from .telegram_text import (
+    split_message, edit_or_split, send_or_split, MAX_MESSAGE,
+)
 from .helpers import (
     is_admin, admin_only, format_price,
     format_datetime, calculate_expiry_time, paginate_items,
@@ -36,6 +39,7 @@ __all__ = [
     'create_quantity_keyboard',
     'format_stock', 'read_image_bytes', 'LOW_STOCK_THRESHOLD',
     'create_language_keyboard', 'create_terms_menu_keyboard',
+    'split_message', 'edit_or_split', 'send_or_split', 'MAX_MESSAGE',
     'create_cancel_keyboard', 'create_payment_method_keyboard',
     'payment_methods_available', 'two_column_rows',
     'create_support_keyboard',

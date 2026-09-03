@@ -25,7 +25,7 @@ from database import (
 )
 from utils import (
     is_admin, admin_only, format_price, to_money, log_admin_action,
-    create_admin_product_menu_keyboard,
+    create_admin_product_menu_keyboard, edit_or_split,
     create_admin_category_menu_keyboard, create_admin_user_menu_keyboard,
     create_admin_order_menu_keyboard, create_admin_settings_menu_keyboard,
     create_admin_broadcast_menu_keyboard, parse_keys_from_text, clear_ban_cache
@@ -948,7 +948,8 @@ async def _render_order_detail(query, order_id: int):
 
     message, reply_markup = result
     try:
-        await query.edit_message_text(message, reply_markup=reply_markup)
+        # Same key list as the customer sees, so the same length limit.
+        await edit_or_split(query, message, reply_markup)
     except Exception:
         # Same content as before -> Telegram returns "message is not modified"
         pass

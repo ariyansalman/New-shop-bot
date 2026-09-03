@@ -31,7 +31,7 @@ from utils import (
     payment_methods_available,
     create_quantity_keyboard, create_main_menu_keyboard,
     calculate_expiry_time, notify_admin, check_user_banned_async,
-    t, DEFAULT_LANG,
+    t, DEFAULT_LANG, edit_or_split,
 )
 from config.settings import settings as app_settings
 from services.crypto_bot import CryptoBotService
@@ -998,7 +998,11 @@ async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("📋 Order History", callback_data="order_history")
         ]
     ]
-    await query.edit_message_text(user_message, reply_markup=InlineKeyboardMarkup(keyboard))
+    # Split rather than send-and-fail. A bulk order of keys builds a message
+    # past Telegram's 4096 limit, and by this point the wallet is debited
+    # and the keys are marked sold - a rejected send would mean the customer
+    # has paid for keys they can never see.
+    await edit_or_split(query, user_message, InlineKeyboardMarkup(keyboard))
 
     admin_message = f"""🛍 New Order Received
 
