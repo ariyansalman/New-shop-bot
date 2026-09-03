@@ -11,7 +11,7 @@ import ast
 import pathlib
 import sqlite3
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SKIP_DIRS = {"tests", "alembic", "__pycache__", ".git", ".venv"}
@@ -264,6 +264,59 @@ def test_the_models_and_the_migrations_agree(tmp_path, monkeypatch):
                 drift.append(f"{table}.{column}: models={a} migrations={b}")
 
     assert not drift, "Model/migration drift:\n  " + "\n  ".join(drift)
+
+
+# The columns the busiest screens filter or sort on. Losing an index here
+# costs nothing locally and turns into a full table scan per browse in
+# production, which is exactly the kind of regression nobody notices.
+HOT_PATH_INDEXES = {
+    ("products", "category_id"),
+    ("products", "subcategory_id"),
+    ("products", "is_active"),
+    ("orders", "status"),
+    ("orders", "created_at"),
+    ("orders", "user_id"),
+    ("order_items", "order_id"),
+    ("product_keys", "product_id"),
+    ("product_keys", "is_sold"),
+    ("product_keys", "order_id"),
+    ("transactions", "user_id"),
+    ("transactions", "status"),
+    ("transactions", "created_at"),
+    ("users", "telegram_id"),
+    ("users", "referral_code"),
+    ("users", "referred_by_id"),
+}
+
+
+def test_the_hot_read_paths_are_indexed(tmp_path, monkeypatch):
+    """Every column above must carry an index in the migrated schema."""
+    from alembic import command
+    from alembic.config import Config
+    import database.db as db
+
+    migrated = tmp_path / "indexed.db"
+    cfg = Config(str(ROOT / "alembic.ini"))
+    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{migrated}")
+    cfg.attributes["configure_logger"] = False
+    # alembic/env.py reads the URL from settings, not from the config.
+    monkeypatch.setattr(db.settings, "DATABASE_URL", f"sqlite:///{migrated}",
+                        raising=False)
+    command.upgrade(cfg, "head")
+
+    inspector = inspect(create_engine(f"sqlite:///{migrated}"))
+    indexed = set()
+    for table in inspector.get_table_names():
+        for index in inspector.get_indexes(table):
+            for column in index["column_names"]:
+                indexed.add((table, column))
+        # A UNIQUE column is served by its own implicit index.
+        for unique in inspector.get_unique_constraints(table):
+            for column in unique["column_names"]:
+                indexed.add((table, column))
+
+    missing = sorted(HOT_PATH_INDEXES - indexed)
+    assert not missing, f"unindexed hot-path columns: {missing}"
 
 
 # ---------------------------------------------------------- wiring

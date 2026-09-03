@@ -147,15 +147,15 @@ class Product(Base):
     price = Column(Money, nullable=False)
     stock_count = Column(Integer, default=0)
     product_type = Column(Enum(ProductType), nullable=False)
-    category_id = Column(Integer, ForeignKey('categories.id'), nullable=True)
-    subcategory_id = Column(Integer, ForeignKey('subcategories.id'), nullable=True)
+    category_id = Column(Integer, ForeignKey('categories.id'), nullable=True, index=True)
+    subcategory_id = Column(Integer, ForeignKey('subcategories.id'), nullable=True, index=True)
     image_path = Column(String(500), nullable=True)
     download_link = Column(String(500), nullable=True)  # For file-type products
     # Shown to the buyer alongside the key or link: how to redeem it, where
     # to enter it, what it will not work with. Optional - a product without
     # instructions delivers exactly as it did before.
     delivery_instructions = Column(Text, nullable=True)
-    is_active = Column(Boolean, default=True)
+    is_active = Column(Boolean, default=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -174,7 +174,7 @@ class ProductKey(Base):
     product_id = Column(Integer, ForeignKey('products.id'), nullable=False, index=True)
     key_value = Column(Text, nullable=False)
     is_sold = Column(Boolean, default=False, index=True)
-    order_id = Column(Integer, ForeignKey('orders.id'), nullable=True)
+    order_id = Column(Integer, ForeignKey('orders.id'), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     sold_at = Column(DateTime, nullable=True)
 
@@ -209,9 +209,9 @@ class Order(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False, index=True)
     total_amount = Column(Money, nullable=False)
-    status = Column(Enum(OrderStatus), default=OrderStatus.PROCESSING)
+    status = Column(Enum(OrderStatus), default=OrderStatus.PROCESSING, index=True)
     dispute_status = Column(Enum(DisputeStatus), default=DisputeStatus.NIL)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
     completed_at = Column(DateTime, nullable=True)
 
     # Relationships
@@ -260,7 +260,7 @@ class Transaction(Base):
     payment_method = Column(Enum(PaymentMethod), nullable=False)
     crypto_address = Column(String(500), nullable=True)
     status = Column(Enum(TransactionStatus), default=TransactionStatus.PENDING, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
     expires_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
 

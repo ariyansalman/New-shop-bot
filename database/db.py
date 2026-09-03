@@ -125,6 +125,12 @@ def _column_names(inspector, table: str) -> set:
     return {c["name"] for c in inspector.get_columns(table)}
 
 
+def _index_names(inspector, table: str) -> set:
+    if not inspector.has_table(table):
+        return set()
+    return {i["name"] for i in inspector.get_indexes(table)}
+
+
 def _column(inspector, table: str, column: str):
     if not inspector.has_table(table):
         return None
@@ -164,6 +170,8 @@ _MIGRATION_PROBES = [
     ("c7e83a1d4b09", lambda i: "referral_code" in _column_names(i, "users")),
     # d9f47b23e6a1: the FAQ page
     ("d9f47b23e6a1", lambda i: "faq_text" in _column_names(i, "settings")),
+    # e5b19c74d3a2: indexes for the hot read paths
+    ("e5b19c74d3a2", lambda i: "ix_orders_status" in _index_names(i, "orders")),
 ]
 
 # The revision an unstamped database is at when none of the probes pass.
