@@ -55,11 +55,6 @@ def get_page_sync(page: str):
         return session.query(column).scalar()
 
 
-def get_terms_sync():
-    """The terms text itself, or None."""
-    return get_page_sync("terms")
-
-
 def set_page_sync(page: str, text, admin_telegram_id: int) -> bool:
     """Save one page and update the cache. Call from a thread.
 
@@ -85,12 +80,6 @@ def set_page_sync(page: str, text, admin_telegram_id: int) -> bool:
             (getattr(row, column) or "").strip() for column in PAGES.values())
 
     return cleaned is not None
-
-
-def set_terms_sync(text, admin_telegram_id: int) -> bool:
-    """Save the terms page. Kept for the existing call sites."""
-    set_page_sync("terms", text, admin_telegram_id)
-    return _has_terms
 
 
 def set_referral_bonus_cache(enabled: bool) -> None:

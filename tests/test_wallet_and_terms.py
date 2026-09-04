@@ -174,7 +174,7 @@ def test_the_terms_button_is_hidden_until_a_store_writes_some():
 
 async def test_writing_terms_reveals_the_button():
     await __import__("asyncio").to_thread(
-        store_content.set_terms_sync, "Refunds within 24h.", 1)
+        store_content.set_page_sync, "terms", "Refunds within 24h.", 1)
 
     labels = [b.callback_data for row in
               create_main_menu_keyboard().inline_keyboard for b in row]
@@ -194,7 +194,7 @@ async def test_the_terms_section_offers_both_pages():
 async def test_the_terms_page_shows_what_the_admin_wrote():
     make_user()
     await __import__("asyncio").to_thread(
-        store_content.set_terms_sync, "Warranty: 30 days.", 1)
+        store_content.set_page_sync, "terms", "Warranty: 30 days.", 1)
 
     query = await press(uh.terms_page_callback, "terms_conditions")
 
@@ -211,9 +211,9 @@ async def test_an_unpublished_page_says_so_rather_than_showing_blank():
 
 async def test_clearing_terms_hides_the_button_again():
     await __import__("asyncio").to_thread(
-        store_content.set_terms_sync, "Something", 1)
+        store_content.set_page_sync, "terms", "Something", 1)
     await __import__("asyncio").to_thread(
-        store_content.set_terms_sync, "", 1)
+        store_content.set_page_sync, "terms", "", 1)
 
     labels = [b.callback_data for row in
               create_main_menu_keyboard().inline_keyboard for b in row]
@@ -222,7 +222,7 @@ async def test_clearing_terms_hides_the_button_again():
 
 async def test_whitespace_only_terms_do_not_count_as_written():
     await __import__("asyncio").to_thread(
-        store_content.set_terms_sync, "   \n  ", 1)
+        store_content.set_page_sync, "terms", "   \n  ", 1)
 
     assert store_content.has_terms() is False
     with get_db_session() as session:
@@ -231,7 +231,7 @@ async def test_whitespace_only_terms_do_not_count_as_written():
 
 async def test_setting_terms_is_audit_logged():
     await __import__("asyncio").to_thread(
-        store_content.set_terms_sync, "Refund policy", 4242)
+        store_content.set_page_sync, "terms", "Refund policy", 4242)
 
     with get_db_session() as session:
         assert session.query(AdminActionLog).filter_by(
@@ -240,7 +240,7 @@ async def test_setting_terms_is_audit_logged():
 
 async def test_the_flag_survives_a_restart():
     await __import__("asyncio").to_thread(
-        store_content.set_terms_sync, "Refund policy", 1)
+        store_content.set_page_sync, "terms", "Refund policy", 1)
 
     store_content._has_terms = False          # as a fresh process starts
     assert await __import__("asyncio").to_thread(store_content.read_sync) is True

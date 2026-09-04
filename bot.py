@@ -55,7 +55,10 @@ async def error_handler(update: object, context) -> None:
                     "⚠️ Something went wrong. Please try again or contact support."
                 )
         except Exception:
-            pass
+            # This is the handler of last resort; raising here would lose
+            # the original error entirely. Log at debug so a persistently
+            # broken apology path is still findable.
+            logger.debug("Could not deliver the error notice", exc_info=True)
 
 
 def build_application(post_init=None):

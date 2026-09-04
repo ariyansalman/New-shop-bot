@@ -70,7 +70,10 @@ def _set_sqlite_pragmas(dbapi_connection, connection_record):
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.close()
     except Exception:
-        pass
+        # Not fatal, but not nothing either: without foreign_keys=ON,
+        # SQLite silently accepts rows the schema forbids, so the tests
+        # would pass on data Postgres would reject.
+        logger.warning("Could not set SQLite pragmas", exc_info=True)
 
 
 # Create session factory

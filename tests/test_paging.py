@@ -180,3 +180,33 @@ async def test_the_user_list_pages_without_loading_every_user(clean_db):
     rows = [b for row in markup.inline_keyboard for b in row
             if b.callback_data.startswith("view_user_")]
     assert len(rows) == PAGE_SIZE
+
+
+# ----------------------------------------------------- long input
+
+async def test_a_very_long_search_still_gets_an_answer(clean_db):
+    """Telegram takes a 4,096-character query but will not send one back
+    wrapped in a template. Measured: a 4,058-character query built a
+    4,097-character reply, one over the limit, so the send was refused and
+    the customer got no answer at all."""
+    from handlers import user_handlers
+    from utils.telegram_text import MAX_MESSAGE
+
+    class Message:
+        def __init__(self, text):
+            self.text = text
+            self.replies = []
+
+        async def reply_text(self, text, reply_markup=None, **kwargs):
+            self.replies.append(text)
+
+    class Update:
+        def __init__(self, message, user_id):
+            self.message = message
+            self.effective_user = type("U", (), {"id": user_id})()
+
+    message = Message("z" * 4096)      # the longest Telegram accepts
+    await user_handlers.search_results(Update(message, 4242), FakeContext())
+
+    assert message.replies
+    assert all(len(reply) <= MAX_MESSAGE for reply in message.replies)

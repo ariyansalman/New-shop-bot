@@ -359,6 +359,10 @@ SEARCH_QUERY = 30
 # Short queries match nearly everything, which is not a search result.
 _MIN_QUERY = 2
 _MAX_RESULTS = 10
+# How much of the customer's query to quote back. Telegram takes a
+# 4,096-character message from them but will not send one back that
+# long once it is inside a template.
+_MAX_ECHO = 100
 
 
 async def search_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -412,8 +416,12 @@ async def search_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
     found = await asyncio.to_thread(_sync)
 
     if not found:
+        # Echo back a trimmed query. Telegram accepts a 4,096-character
+        # message from the customer, and quoting all of it back inside a
+        # template pushes the reply past what it will send - so a very long
+        # search would answer with nothing at all.
         await update.message.reply_text(
-            t('search.none', lang, query=text),
+            t('search.none', lang, query=text[:_MAX_ECHO]),
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton(t('common.back_arrow', lang),
                                      callback_data="main_menu")]]))
