@@ -6,6 +6,43 @@ nor `SQLAlchemy` is installed). Findings are ordered by severity.
 
 ---
 
+## 0. Follow-up audit (2026-09-01)
+
+The fixes below were already in place from the previous pass (verified by
+re-reading the code, not assumed). Two new issues turned up on a fresh read:
+
+### 0.1 CryptoBot webhook and the 30s poller could double-credit the same payment
+`webhook_server.py :: process_invoice_paid`, `handlers/payment_handlers.py ::
+check_pending_payments`
+
+Both paths query for transactions with `status == PENDING` and then set them
+to `COMPLETED` and credit the wallet, but neither locked the row first. The
+webhook (Flask thread) and the poller (asyncio job, every 30s) run in the same
+process, so if a payment confirmation arrived from both channels close
+together, both could read `PENDING` before either committed and credit the
+wallet twice for one payment.
+
+**Fixed:** both paths now re-fetch the specific transaction with
+`with_for_update()` and re-check `status == PENDING` immediately before
+crediting; PostgreSQL re-evaluates the `WHERE` clause after the lock is
+granted, so whichever path loses the race sees the row already `COMPLETED`
+and skips it. (No-op on SQLite, same caveat as the existing purchase-flow
+locks — see "SQLite + `with_for_update()`" below.)
+
+### 0.2 Dispute resolution answered the same callback query twice
+`handlers/dispute_handlers.py :: admin_resolve_dispute_callback`
+
+`query.answer()` fired unconditionally after the admin check, and then
+`query.answer("⚠️ This dispute is already resolved.", ...)` fired again when
+the dispute was already resolved — the exact "answer twice" bug described in
+1.2 below, just not caught in that pass. Clicking resolve on an
+already-resolved dispute raised instead of showing the intended alert.
+
+**Fixed:** the already-resolved case now uses `edit_message_text`, matching
+the idiom the other admin handlers already use for this.
+
+---
+
 ## 1. Security
 
 ### 1.1 Dispute admin panel had no authorization at all — **critical**
@@ -175,17 +212,113 @@ doubled `stock_count` and the same key could be delivered to two customers.
 
 ## Remaining recommendations (not changed)
 
-1. **Money as `Float`.** `wallet_balance`, `price` and `total_amount` are
-   floating point, so rounding error accumulates. Migrate to `Numeric(12, 2)`
-   or store integer cents.
-2. **SQLite + `with_for_update()`.** Row locks are a no-op on SQLite; the new
+1. **SQLite + `with_for_update()`.** Row locks are a no-op on SQLite; the new
    locking only takes effect on PostgreSQL/MySQL. For real concurrency, move the
    database.
-3. **`webhook_server.py` runs Flask's dev server.** Put it behind
-   gunicorn + HTTPS, and give it a way to notify the user (it currently has no
-   bot instance and only leaves a TODO).
-4. **No tests.** The payment and key-assignment paths in particular deserve
-   coverage before further changes.
-5. **`stock_count` is denormalized** from `product_keys`. It is now recomputed on
+2. **`stock_count` is denormalized** from `product_keys`. It is now recomputed on
    restock and repaired on shortage, but a periodic reconciliation job would be
    safer.
+
+Resolved since the first pass, as part of the "make this more professional"
+work (see git log / commit messages for detail on each):
+- **Money as `Float`** -> `Numeric(12, 2)` columns + `decimal.Decimal`
+  arithmetic throughout (`utils/money.py`), via an Alembic migration.
+- **`webhook_server.py` runs Flask's dev server** -> already moved to
+  waitress, and the webhook does have a bot instance to notify through
+  (`app.py`'s `_make_threadsafe_notifier`); this item was stale.
+- **No tests** -> `tests/` (pytest), 29 tests covering the purchase flow,
+  the webhook/poller double-credit race, refund idempotency, and the
+  restock stock-count bug found along the way. See `CONTRIBUTING.md` for
+  how to run them.
+
+---
+
+## Second full audit (whole project)
+
+A full pass over all 8,855 lines of application code plus the deploy
+configs, Alembic migrations and git history. Each finding below was
+reproduced by running it, not inferred from reading.
+
+### Fixed in this pass
+
+1. **Deleting a product that had ever been sold crashed, silently.**
+   `session.delete(product)` made SQLAlchemy null out
+   `order_items.product_id`, which was `NOT NULL` ->
+   `IntegrityError: NOT NULL constraint failed: order_items.product_id`.
+   Worse, the handler had already called `query.answer()`, so the global
+   error handler could not answer the same callback query a second time
+   and its "something went wrong" fallback was swallowed too - the admin
+   saw *nothing*, the button just looked dead. Since it fires for any
+   product with order history, that is the normal case, not an edge one.
+   -> `order_items.product_id` is nullable now (migration
+   `b7c41a9d2e10`), the handler detaches the order lines explicitly, and
+   the order line survives as the customer's receipt (quantity, price
+   paid, delivered keys). This is what the rest of the code was already
+   written for: both order-detail views already render a missing product
+   as "Deleted product" / "Unknown Product".
+
+2. **`migrations/categorynullable.py` was a live trap.** A pre-Alembic
+   ad-hoc script that DROPs and recreates the `products` table with
+   `price FLOAT` - running it would have undone the `Numeric(12,2)` money
+   migration and brought float rounding back to every price. Its stated
+   purpose (nullable `category_id`) is already in the Alembic baseline.
+   -> Deleted, along with its stale references in README/DEPLOY/CONTRIBUTING.
+
+3. **Running the app before migrations wedged Alembic permanently.** On an
+   empty database `init_db()`'s `create_all()` built the schema without
+   stamping a version, so every later `alembic upgrade head` failed with
+   `table broadcasts already exists` (exit 1). Production was safe only
+   because Railway runs the release command first; local dev and any
+   `docker run` that skipped migrations hit it.
+   -> `init_db()` now stamps head when (and only when) it creates a
+   database from scratch. A legacy database that predates Alembic is
+   deliberately *not* auto-stamped - it may still need real migrations, so
+   it keeps following the `alembic stamp <baseline>` path in DEPLOY.md.
+
+4. **Uploaded images disappeared on every redeploy, silently.** Railway's
+   filesystem is ephemeral and no volume is configured, so product images
+   and the store logo were lost on each deploy. DEPLOY.md documented the
+   volume setup, but nothing said anything at runtime.
+   -> `validate_settings()` now warns when `ASSETS_DIR` is a relative
+   (therefore container-local) path.
+
+5. **Smaller ones.** Numeric env vars (`DB_POOL_SIZE`, `MIN_TOPUP_AMOUNT`,
+   `PORT`, ...) crashed at import with a bare `ValueError` on a typo -
+   now they warn and fall back, the way `ADMIN_TELEGRAM_ID` already did.
+   `admin_select_product_restock_callback` parsed `int(query.data...)`
+   unguarded (the only such handler in the file). `check_payment_status`
+   raised `TypeError` on a transaction whose invoice was never created,
+   re-logging a traceback every poll cycle. Removed a dead `pass` and the
+   unused `get_or_create_user()`. Ruff's `exclude` pointed at a directory
+   this project never had, so it silently did nothing - dropped, and
+   `alembic/versions` is linted like everything else.
+
+### Checked and found sound (no change needed)
+
+- **Secrets**: nothing real in git history; `.env` ignored, only
+  placeholders and CI dummies.
+- **Webhook**: HMAC signature verified against the raw body, rejects when
+  the key is unset, credits under a row lock with an amount check, and
+  returns no internal detail on error.
+- **Authorization**: every conversation entry point is `is_admin`-guarded
+  and every conversation is `per_user=True, per_chat=True`, so a non-admin
+  cannot reach an admin conversation's later states; restock adds a
+  `filters.User` check on top. (The continuation-state handlers have no
+  guard of their own by design - they are unreachable without the entry.)
+- **Money**: `Numeric(12,2)` + `Decimal` end to end, with a DB-level
+  `wallet_balance >= 0` check constraint present in the migration.
+- **Concurrency**: `SELECT ... FOR UPDATE` on purchase and on payment
+  crediting; no nested `get_db_session()` anywhere (verified by AST scan),
+  which matters because it calls `Session.remove()` on exit.
+
+### Still open (deliberate, not defects)
+
+- `Cart` and `Broadcast` tables are unused by any feature. Left in place:
+  dropping them is a destructive migration for no functional gain, and
+  `Cart` is still referenced by the product-delete cleanup.
+- `check_payment_status` treats an invoice with a `paid_at` as paid even if
+  its status is not `"paid"`. Left as is on purpose - it errs toward
+  crediting a customer who really did pay, and the amount check still
+  applies. Changing money-crediting semantics on a hunch is not worth it.
+- The two items from the first pass (SQLite row locks being a no-op,
+  `stock_count` denormalization) still stand.

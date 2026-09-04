@@ -4,6 +4,7 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
+    "releaseCommand": "alembic upgrade head",
     "startCommand": "python app.py",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 120,

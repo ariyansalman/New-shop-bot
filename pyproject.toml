@@ -1,0 +1,37 @@
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+# No `exclude` on purpose: alembic/versions is hand-edited here (enum
+# cleanup, server_defaults, data backfills), so it gets linted like the
+# rest of the code. There used to be an `exclude = ["migrations/versions"]`
+# here, left over from a template - it pointed at a path this project
+# never had, so it silently did nothing.
+
+[tool.ruff.lint]
+# Keep this intentionally narrow: the codebase predates linting, so start
+# with correctness/bug-risk checks rather than full style enforcement.
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes (unused imports/vars, undefined names, etc.)
+    "B",   # flake8-bugbear (common bug patterns)
+]
+ignore = [
+    "E501",  # line length is handled by line-length above, not worth failing CI on
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+# Without this, `pytest tests/` (as opposed to `python -m pytest tests/`)
+# does not add the repo root to sys.path, so the app's own top-level
+# packages (database, config, handlers, ...) aren't importable - this bit
+# CI, which runs the bare `pytest` entry point, even though it worked
+# locally under `python -m pytest` (which prepends the cwd to sys.path
+# itself). Confirmed by reproducing locally with the bare `pytest` form.
+pythonpath = ["."]
+# The same expected warning bot.py filters at boot. Twenty copies per
+# collection made the real warnings in a test run hard to find.
+filterwarnings = [
+    "ignore:If 'per_message=False':UserWarning",
+]

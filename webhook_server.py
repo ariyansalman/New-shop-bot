@@ -17,12 +17,14 @@ import hmac
 import hashlib
 import logging
 from datetime import datetime
+from decimal import Decimal
 
 from flask import Flask, request, jsonify
 
 from database.db import get_db_session
 from database.models import Transaction, TransactionStatus, PaymentMethod, User
 from config.settings import settings
+from utils.money import to_money, money_or_none
 
 logger = logging.getLogger(__name__)
 
@@ -87,40 +89,60 @@ def process_invoice_paid(invoice_data: dict):
             # SQLAlchemy persists Enum members by NAME ("CRYPTO_WALLET"), so
             # filtering on the string 'crypto_wallet' matched nothing and every
             # webhook used to be silently dropped.
-            transactions = session.query(Transaction).filter(
+            candidates = session.query(Transaction.id, Transaction.crypto_address).filter(
                 Transaction.payment_method == PaymentMethod.CRYPTO_WALLET,
                 Transaction.status == TransactionStatus.PENDING
             ).all()
 
-            transaction = None
-            for txn in transactions:
-                if txn.crypto_address and txn.crypto_address.startswith(f"{invoice_id}|"):
-                    transaction = txn
+            transaction_id = None
+            for txn_id, crypto_address in candidates:
+                if crypto_address and crypto_address.startswith(f"{invoice_id}|"):
+                    transaction_id = txn_id
                     break
 
-            if not transaction:
+            if transaction_id is None:
                 # Normal when the 30s poller got there first.
                 logger.info("No pending transaction for invoice %s", invoice_id)
                 return
 
-            # Do not credit more than the invoice was actually issued for.
-            try:
-                if invoice_amount is not None and float(invoice_amount) + 0.01 < float(transaction.amount):
-                    logger.error("Amount mismatch for invoice %s: invoice=%s expected=%s",
-                                 invoice_id, invoice_amount, transaction.amount)
-                    return
-            except (TypeError, ValueError):
-                logger.error("Unparsable invoice amount for %s: %r", invoice_id, invoice_amount)
+            # Re-fetch under a row lock and re-check status: the 30s poller
+            # (check_pending_payments) runs in this same process and could be
+            # crediting this exact transaction right now. Without the lock,
+            # both paths could read status=PENDING and credit the wallet twice.
+            transaction = session.query(Transaction).filter_by(
+                id=transaction_id, status=TransactionStatus.PENDING
+            ).with_for_update().first()
+
+            if not transaction:
+                logger.info("Transaction %s for invoice %s already processed", transaction_id, invoice_id)
                 return
 
-            user = session.query(User).filter_by(id=transaction.user_id).first()
+            # Do not credit more than the invoice was actually issued for.
+            # money_or_none goes through Decimal(str(x)) rather than float(),
+            # so a JSON amount like 19.99 doesn't pick up binary-float noise
+            # before being compared.
+            invoice_amount_dec = money_or_none(invoice_amount) if invoice_amount is not None else None
+            if invoice_amount is not None and invoice_amount_dec is None:
+                logger.error("Unparsable invoice amount for %s: %r", invoice_id, invoice_amount)
+                return
+            if invoice_amount_dec is not None and invoice_amount_dec + Decimal("0.01") < transaction.amount:
+                logger.error("Amount mismatch for invoice %s: invoice=%s expected=%s",
+                             invoice_id, invoice_amount, transaction.amount)
+                return
+
+            # Locked for the same reason as in the poller: the
+            # transaction lock above stops this invoice being credited
+            # twice, but two invoices for one user arriving together would
+            # both read the old balance and lose one of the credits.
+            user = (session.query(User).filter_by(id=transaction.user_id)
+                    .with_for_update().first())
             if not user:
                 logger.error("User missing for transaction %s", transaction.id)
                 return
 
             transaction.status = TransactionStatus.COMPLETED
             transaction.completed_at = datetime.utcnow()
-            user.wallet_balance = round(user.wallet_balance + transaction.amount, 2)
+            user.wallet_balance = to_money(user.wallet_balance + transaction.amount)
 
             notify = (user.telegram_id, transaction.amount, user.wallet_balance, transaction.id)
             logger.info("Payment credited via webhook: txn #%s, $%.2f",

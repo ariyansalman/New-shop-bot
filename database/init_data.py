@@ -1,7 +1,11 @@
 """Database initialization script with default data."""
 
+import logging
+
 from database.db import get_db_session, init_db, check_connection
 from database.models import Settings
+
+logger = logging.getLogger(__name__)
 
 
 def create_default_settings():
@@ -15,20 +19,21 @@ def create_default_settings():
                 channel_username=""
             )
             session.add(settings)
-            print("[OK] Default settings created")
+            logger.info("Default settings created")
         else:
-            print("[OK] Settings already exist")
+            logger.info("Settings already exist")
 
 
 def initialize_database():
     """Initialize database with tables and default data."""
-    print("Initializing database...")
+    logger.info("Initializing database...")
     if not check_connection():
         raise RuntimeError("Database is unreachable - see the error above")
     init_db()
     create_default_settings()
-    print("[OK] Database initialization complete")
+    logger.info("Database initialization complete")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     initialize_database()

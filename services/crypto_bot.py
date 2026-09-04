@@ -1,12 +1,58 @@
 """Crypto Bot API service for cryptocurrency payments."""
 
 import logging
+import time
+from decimal import Decimal
 
 import requests
 
 from config.settings import settings
+from utils.money import money_or_none
 
 logger = logging.getLogger(__name__)
+
+# Retried once a transient failure happens: connect/read timeouts, 5xx
+# (the server didn't durably process the request) and 429 (rate limited).
+# NOT retried: 4xx other than 429 - that's a bad request on our end and
+# won't succeed on a second try.
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+_MAX_ATTEMPTS = 3
+_BACKOFF_SECONDS = (0.5, 1.5)  # delay before attempt 2, then attempt 3
+
+
+def _request_with_retry(method: str, url: str, **kwargs) -> requests.Response:
+    """requests.request() with retry-with-backoff on transient failures.
+
+    Only used for GET (check_payment_status) and the one POST
+    (generate_payment_address / createInvoice). A retried POST after a
+    timeout carries a small risk of creating a second invoice if the first
+    request actually reached CryptoBot before the client-side timeout - the
+    CryptoBot API has no idempotency-key support to close that gap. The
+    downside is bounded, though: an orphaned extra invoice, never linked to
+    a Transaction (only the last response's pay_url gets stored), which
+    just sits unused until it expires. That's a better trade-off than the
+    previous behavior of never retrying at all and just failing the top-up.
+    """
+    last_exc = None
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            response = requests.request(method, url, **kwargs)
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+            last_exc = exc
+            if attempt < _MAX_ATTEMPTS - 1:
+                logger.warning("CryptoBot API %s %s failed (%s), retrying...", method, url, exc)
+                time.sleep(_BACKOFF_SECONDS[attempt])
+                continue
+            raise
+        if response.status_code in _RETRYABLE_STATUS_CODES and attempt < _MAX_ATTEMPTS - 1:
+            logger.warning("CryptoBot API %s %s returned %s, retrying...",
+                            method, url, response.status_code)
+            time.sleep(_BACKOFF_SECONDS[attempt])
+            continue
+        return response
+    # Unreachable in practice (the loop always returns or raises), but keeps
+    # the type checker and any future refactor honest.
+    raise last_exc
 
 
 class CryptoBotService:
@@ -60,7 +106,8 @@ class CryptoBotService:
                     f"https://t.me/{settings.BOT_USERNAME}?start=payment_{transaction_id}"
                 )
 
-            response = requests.post(
+            response = _request_with_retry(
+                "POST",
                 f"{self.base_url}/createInvoice",
                 headers=headers,
                 json=payload,
@@ -78,7 +125,6 @@ class CryptoBotService:
                 result = data.get("result", {})
                 # Get invoice ID and payment URL
                 invoice_id = result.get("invoice_id", "")  # Numeric ID for API calls
-                invoice_hash = result.get("hash", "")      # Hash for URLs
                 bot_invoice_url = result.get("bot_invoice_url", "")
                 mini_app_url = result.get("mini_app_invoice_url", "")
                 pay_url = bot_invoice_url or mini_app_url
@@ -96,7 +142,7 @@ class CryptoBotService:
                 logger.error("CryptoBot API error: %s", response.status_code)
                 return None
 
-        except Exception as e:
+        except Exception:
             logger.exception("Error generating crypto payment invoice")
             return None
 
@@ -119,10 +165,18 @@ class CryptoBotService:
             # Extract invoice_id from stored format
             invoice_id = None
 
+            # A PENDING transaction can legitimately have no address yet: the
+            # row is committed before the createInvoice call, so a crash in
+            # between leaves one behind. Without this guard the `in` test
+            # below raises TypeError on None and the poller logged a fresh
+            # traceback for that row every PAYMENT_CHECK_INTERVAL seconds.
+            if not crypto_address:
+                logger.debug("Transaction has no invoice address yet - nothing to check")
+                return False
+
             # Format 1: "invoice_id|pay_url" (NEW FORMAT - numeric invoice_id)
             if "|" in crypto_address:
                 invoice_id = crypto_address.split("|")[0]
-                pass
             # Format 2: Old format - just URL (can't verify these, need to be manually confirmed)
             elif "https://t.me/CryptoBot" in crypto_address or "?start=" in crypto_address:
                 logger.warning("Old URL-only invoice format; admin must confirm manually")
@@ -147,7 +201,8 @@ class CryptoBotService:
                 # Ensure invoice_id is just the numeric ID
                 params["invoice_ids"] = str(invoice_id).strip()
 
-            response = requests.get(
+            response = _request_with_retry(
+                "GET",
                 f"{self.base_url}/getInvoices",
                 headers=headers,
                 params=params,
@@ -179,16 +234,21 @@ class CryptoBotService:
                         # credited with `expected_amount` no matter what the
                         # invoice actually said.
                         invoice_amount = invoice.get("amount")
-                        try:
-                            if invoice_amount is not None and float(invoice_amount) + 0.01 < float(expected_amount):
+                        if invoice_amount is not None:
+                            # money_or_none goes through Decimal(str(x)), not
+                            # float(), so the comparison isn't affected by
+                            # binary-float noise in the JSON-decoded amount.
+                            invoice_amount_dec = money_or_none(invoice_amount)
+                            expected_amount_dec = money_or_none(expected_amount)
+                            if invoice_amount_dec is None or expected_amount_dec is None:
+                                logger.error("Invoice %s has an unparsable amount: %r", invoice_id, invoice_amount)
+                                return False
+                            if invoice_amount_dec + Decimal("0.01") < expected_amount_dec:
                                 logger.error(
                                     "Invoice %s amount mismatch: invoice=%s expected=%s - not crediting",
                                     invoice_id, invoice_amount, expected_amount
                                 )
                                 return False
-                        except (TypeError, ValueError):
-                            logger.error("Invoice %s has an unparsable amount: %r", invoice_id, invoice_amount)
-                            return False
 
                         logger.info("Invoice %s is paid (status=%s)", invoice_id, status)
                         return True

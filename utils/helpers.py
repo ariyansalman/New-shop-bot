@@ -1,13 +1,18 @@
 """Helper utility functions for the Telegram bot."""
 
-import math
+import asyncio
+import logging
 import threading
 from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from functools import wraps
 from telegram import Update
 from telegram.ext import ContextTypes
 from config.settings import settings
 from database import get_db_session, User
+from .money import to_money
+
+logger = logging.getLogger(__name__)
 
 # In-memory cache for ban status (telegram_id: (is_banned, timestamp))
 _ban_cache = {}
@@ -17,8 +22,12 @@ _BAN_CACHE_MAX = 10000  # Bound the cache so it cannot grow indefinitely
 
 
 def is_admin(user_id: int) -> bool:
-    """Check if a user is an admin based on Telegram ID."""
-    return user_id == settings.ADMIN_TELEGRAM_ID
+    """Check if a user is an admin based on Telegram ID.
+
+    Multiple admins are supported via ADMIN_TELEGRAM_IDS (comma-separated,
+    see config/settings.py); ADMIN_TELEGRAM_ID is always included too.
+    """
+    return user_id in settings.ADMIN_IDS
 
 
 def admin_only(func):
@@ -37,37 +46,9 @@ def admin_only(func):
     return wrapper
 
 
-def get_or_create_user(telegram_id: int, username: str = None) -> dict:
-    """Get existing user or create a new one, returned as a plain dict.
-
-    Returning the ORM object was unsafe: the session is closed by the context
-    manager, so every later attribute access raised DetachedInstanceError.
-    """
-    with get_db_session() as session:
-        user = session.query(User).filter_by(telegram_id=telegram_id).first()
-
-        if not user:
-            user = User(telegram_id=telegram_id, username=username)
-            session.add(user)
-            session.commit()
-            session.refresh(user)
-        elif username and user.username != username:
-            # Keep the cached username in sync when the person renames themselves.
-            user.username = username
-            session.commit()
-
-        return {
-            'id': user.id,
-            'telegram_id': user.telegram_id,
-            'username': user.username,
-            'wallet_balance': user.wallet_balance,
-            'is_banned': user.is_banned,
-        }
-
-
-def format_price(price: float) -> str:
-    """Format price to standard USD format."""
-    return f"${price:.2f}"
+def format_price(price) -> str:
+    """Format a money value (Decimal, float or int) to standard USD format."""
+    return f"${to_money(price):.2f}"
 
 
 def format_datetime(dt: datetime) -> str:
@@ -96,34 +77,67 @@ def paginate_items(items, page: int, page_size: int = 5):
 
 
 def validate_amount(amount_str: str) -> tuple:
-    """Validate user input for payment amount."""
+    """Validate user input for payment amount. Returns (ok, Decimal amount, error)."""
     try:
         cleaned = (amount_str or "").strip().replace(",", "").replace("$", "")
-        amount = float(cleaned)
-    except (ValueError, AttributeError):
+        amount = Decimal(cleaned)
+    except (InvalidOperation, ValueError, AttributeError):
         return False, 0, "Invalid amount. Please enter a valid number."
 
-    # float() happily accepts "nan" and "inf".
-    if not math.isfinite(amount):
+    # Decimal("nan") / Decimal("inf") parse without raising, just like float().
+    if not amount.is_finite():
         return False, 0, "Invalid amount. Please enter a valid number."
 
-    amount = round(amount, 2)
+    amount = to_money(amount)
 
-    if amount < settings.MIN_TOPUP_AMOUNT:
-        return False, 0, f"Minimum amount is {settings.MIN_TOPUP_AMOUNT:.2f} USD."
-    if amount > settings.MAX_TOPUP_AMOUNT:
-        return False, 0, f"Amount is too large. Maximum is ${settings.MAX_TOPUP_AMOUNT:,.2f}."
+    # settings.MIN/MAX_TOPUP_AMOUNT are plain floats (env-var parsed); Decimal
+    # can't be compared against float directly, so normalize both sides.
+    min_amount = to_money(settings.MIN_TOPUP_AMOUNT)
+    max_amount = to_money(settings.MAX_TOPUP_AMOUNT)
+
+    if amount < min_amount:
+        return False, 0, f"Minimum amount is {min_amount:.2f} USD."
+    if amount > max_amount:
+        return False, 0, f"Amount is too large. Maximum is ${max_amount:,.2f}."
     return True, amount, ""
 
 
+# Below this, say how many are left rather than just "in stock" - it is
+# true information and it is what makes a buyer decide now.
+LOW_STOCK_THRESHOLD = 5
+
+
+def format_stock(stock_count) -> str:
+    """The stock line a customer sees.
+
+    File products carry UNLIMITED_STOCK rather than a real count, so
+    without this the storefront told buyers "In Stock: 999999".
+    """
+    from database import UNLIMITED_STOCK
+
+    count = stock_count or 0
+    if count >= UNLIMITED_STOCK:
+        return "✅ Instant delivery"
+    if count <= 0:
+        return "❌ Sold out"
+    if count <= LOW_STOCK_THRESHOLD:
+        return f"⚠️ Only {count} left"
+    return f"✅ In stock ({count})"
+
+
 def format_product_display(product, include_description=False) -> str:
-    """Format product information for display."""
-    text = f"""📦 Name: {product.name}
-💰 Price: {format_price(product.price)}
-📦 In Stock: {product.stock_count}"""
+    """Format product information for display.
+
+    The name leads as a heading instead of sitting behind a "Name:" label:
+    this is the shopfront, and the customer already knows what they are
+    looking at.
+    """
+    text = (f"📦 {product.name}\n\n"
+            f"💰 {format_price(product.price)}\n"
+            f"{format_stock(product.stock_count)}")
 
     if include_description and product.description:
-        text += f"\n📝 Description: {product.description}"
+        text += f"\n\n📝 {product.description}"
 
     return text
 
@@ -135,21 +149,45 @@ async def notify_admin(context: ContextTypes.DEFAULT_TYPE, message: str):
             chat_id=settings.ADMIN_TELEGRAM_ID,
             text=message
         )
-    except Exception as e:
-        print(f"Error notifying admin: {e}")
+    except Exception:
+        logger.exception("Error notifying admin")
 
 
 def build_availability_text(products_by_category) -> str:
     """Build availability page text with products grouped by category."""
-    text = "💬 Our available Products\n\n"
+    text = "📦 AVAILABLE NOW\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
 
     for category_name, products in products_by_category.items():
-        text += f"📦━━━━━{category_name}━━━━━📦\n"
+        text += f"▸ {category_name}\n"
         for product in products:
-            text += f"{product.name} | {format_price(product.price)} | Available: {product.stock_count}\n"
+            text += (f"   {product.name}\n"
+                     f"   {format_price(product.price)} · "
+                     f"{format_stock(product.stock_count)}\n")
         text += "\n"
 
-    return text
+    return text.rstrip() + "\n"
+
+
+async def read_image_bytes(path):
+    """Read an image off the event loop, or None if it is not readable.
+
+    Opening and reading a file blocks, and so does handing an open file to
+    Telegram - the upload streams from it while every other user's handler
+    waits. Reading the bytes in a thread first keeps the loop free, and
+    doing it in one step also removes the exists()-then-open() gap where a
+    redeploy could delete the file in between.
+    """
+    if not path:
+        return None
+
+    def _read():
+        try:
+            with open(path, 'rb') as handle:
+                return handle.read()
+        except OSError:
+            return None
+
+    return await asyncio.to_thread(_read)
 
 
 def parse_keys_from_text(text: str) -> list:
@@ -179,6 +217,26 @@ def check_user_banned(telegram_id: int) -> bool:
         _ban_cache[telegram_id] = (result, datetime.utcnow())
 
     return result
+
+
+async def check_user_banned_async(telegram_id: int) -> bool:
+    """Async wrapper around check_user_banned.
+
+    On a cache hit (the common case - see _BAN_CACHE_TTL) this returns
+    immediately without touching a thread. On a cache miss it runs the
+    blocking DB query in a worker thread instead of on the event loop, so
+    one user's ban check can't stall every other user's handler while it
+    waits on the database. Handlers should await this instead of calling
+    check_user_banned directly.
+    """
+    with _ban_cache_lock:
+        cached = _ban_cache.get(telegram_id)
+    if cached:
+        cached_value, cached_time = cached
+        if (datetime.utcnow() - cached_time).total_seconds() < _BAN_CACHE_TTL:
+            return cached_value
+
+    return await asyncio.to_thread(check_user_banned, telegram_id)
 
 
 def clear_ban_cache(telegram_id: int = None):

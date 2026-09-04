@@ -1,6 +1,7 @@
 """Main bot entry point for the Telegram Digital Products Store."""
 
 import logging
+import warnings
 
 from telegram import Update
 from telegram.error import BadRequest, Forbidden
@@ -8,10 +9,12 @@ from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters,
     ConversationHandler, PreCheckoutQueryHandler
 )
-from config import settings, validate_settings
-from database import init_db
+from config import settings, validate_settings, init_sentry
 from database.init_data import initialize_database
-from handlers import user_handlers, admin_handlers, payment_handlers, admin_conversations, dispute_handlers
+from handlers import (user_handlers, admin_handlers, payment_handlers,
+                      admin_conversations, dispute_handlers, binance_pay_handlers,
+                      binance_admin, payments_admin, admin_panel)
+from services import payment_methods, store_content
 
 # M""M M"""""""`YM M""""""'YMM M"""""`'"""`YM M""""""'YMM MM""""""""`M M""MMMMM""M 
 # M  M M  mmmm.  M M  mmmm. `M M  mm.  mm.  M M  mmmm. `M MM  mmmmmmmM M  MMMMM  M 
@@ -20,6 +23,28 @@ from handlers import user_handlers, admin_handlers, payment_handlers, admin_conv
 # M  M M  MMMMM  M M  MMMM' .M M  MMM  MMM  M M  MMMM' .M MM  MMMMMMMM M  MMP' .MM 
 # M  M M  MMMMM  M M       .MM M  MMM  MMM  M M       .MM MM        .M M     .dMMM 
 # MMMM MMMMMMMMMMM MMMMMMMMMMM MMMMMMMMMMMMMM MMMMMMMMMMM MMMMMMMMMMMM MMMMMMMMMMM 
+
+# python-telegram-bot warns once per ConversationHandler that a
+# CallbackQueryHandler is not tracked per message while per_message=False.
+# That is the correct setting here: every one of these conversations mixes
+# button taps with typed replies, and per_message=True only works when a
+# conversation is buttons alone. So the warning is expected, and twenty
+# copies of it on the stderr stream at every boot is twenty lines an
+# operator has to read past to find a real one.
+def apply_warning_filters():
+    """Silence the warnings we have already decided are expected.
+
+    A function rather than a bare call at import, so a test can re-apply
+    it inside warnings.catch_warnings() and confirm nothing else is being
+    swallowed along with it.
+    """
+    from telegram.warnings import PTBUserWarning
+
+    warnings.filterwarnings("ignore", message=r".*per_message=False.*",
+                            category=PTBUserWarning)
+
+
+apply_warning_filters()
 
 # Configure logging
 logging.basicConfig(
@@ -53,7 +78,10 @@ async def error_handler(update: object, context) -> None:
                     "⚠️ Something went wrong. Please try again or contact support."
                 )
         except Exception:
-            pass
+            # This is the handler of last resort; raising here would lose
+            # the original error entirely. Log at debug so a persistently
+            # broken apology path is still findable.
+            logger.debug("Could not deliver the error notice", exc_info=True)
 
 
 def build_application(post_init=None):
@@ -80,12 +108,25 @@ def build_application(post_init=None):
 
     # Top-up conversation
     topup_conv_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(payment_handlers.topup_start, pattern="^topup$")],
+        entry_points=[
+            CallbackQueryHandler(payment_handlers.topup_start, pattern="^topup$"),
+            # Re-enters the conversation at the order-id input state.
+            CallbackQueryHandler(binance_pay_handlers.binance_submit_start,
+                                 pattern="^binance_submit_"),
+        ],
         states={
             payment_handlers.AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, payment_handlers.topup_amount)],
             payment_handlers.METHOD: [
                 CallbackQueryHandler(payment_handlers.payment_method_crypto, pattern="^pay_crypto$"),
                 CallbackQueryHandler(payment_handlers.payment_method_card, pattern="^pay_card$"),
+                CallbackQueryHandler(binance_pay_handlers.payment_method_binance, pattern="^pay_binance$"),
+            ],
+            # "Submit Order ID" opens a plain text-input state: the user
+            # sends the Binance id and that submission itself starts
+            # verification. Deliberately no Verify/Cancel buttons here.
+            binance_pay_handlers.BINANCE_ORDER_ID: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND,
+                               binance_pay_handlers.binance_order_id_received),
             ],
         },
         fallbacks=[
@@ -133,6 +174,10 @@ def build_application(post_init=None):
             ],
             admin_conversations.PRODUCT_IMAGE: [
                 MessageHandler(filters.PHOTO | filters.TEXT, admin_conversations.product_image),
+                CallbackQueryHandler(admin_conversations.cancel_product_creation, pattern="^cancel_product$")
+            ],
+            admin_conversations.PRODUCT_INSTRUCTIONS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_conversations.product_instructions),
                 CallbackQueryHandler(admin_conversations.cancel_product_creation, pattern="^cancel_product$")
             ],
             admin_conversations.PRODUCT_DOWNLOAD_LINK: [
@@ -332,6 +377,40 @@ def build_application(post_init=None):
     )
     application.add_handler(config_welcome_conv)
 
+    # Terms & FAQ configuration conversation
+    config_terms_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_conversations.config_terms, pattern="^admin_(terms|faq)$")],
+        states={
+            admin_conversations.TERMS_TEXT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_conversations.terms_value)],
+        },
+        fallbacks=[
+            MessageHandler(filters.COMMAND, admin_conversations.cancel_settings),
+            CallbackQueryHandler(admin_conversations.cancel_settings, pattern="^cancel$")
+        ],
+        per_user=True,
+        per_chat=True,
+        allow_reentry=True,
+    )
+    application.add_handler(config_terms_conv)
+
+    # Refer & Earn bonus conversation
+    config_referral_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_conversations.config_referral, pattern="^admin_referral$")],
+        states={
+            admin_conversations.REFERRAL_BONUS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_conversations.referral_bonus_value)],
+        },
+        fallbacks=[
+            MessageHandler(filters.COMMAND, admin_conversations.cancel_settings),
+            CallbackQueryHandler(admin_conversations.cancel_settings, pattern="^cancel$")
+        ],
+        per_user=True,
+        per_chat=True,
+        allow_reentry=True,
+    )
+    application.add_handler(config_referral_conv)
+
     # Store logo configuration conversation
     config_logo_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(admin_conversations.config_store_logo, pattern="^admin_store_logo$")],
@@ -426,6 +505,34 @@ def build_application(post_init=None):
 
     # Register callback query handlers
     application.add_handler(CallbackQueryHandler(user_handlers.main_menu_callback, pattern="^main_menu$"))
+    search_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(user_handlers.search_start, pattern="^search$")],
+        states={
+            user_handlers.SEARCH_QUERY: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, user_handlers.search_results),
+                CallbackQueryHandler(user_handlers.search_cancel, pattern="^main_menu$"),
+            ],
+        },
+        fallbacks=[
+            MessageHandler(filters.COMMAND, user_handlers.search_cancel),
+            CallbackQueryHandler(user_handlers.search_cancel, pattern="^main_menu$"),
+        ],
+        per_user=True,
+        per_chat=True,
+        allow_reentry=True,
+    )
+    application.add_handler(search_conv)
+
+    application.add_handler(CallbackQueryHandler(user_handlers.referral_callback, pattern="^referral$"))
+    # "wallet" is the callback this screen shipped with; it stays routed so
+    # a message already on someone's phone still works after the rename.
+    application.add_handler(CallbackQueryHandler(
+        user_handlers.account_callback, pattern="^(account|wallet)$"))
+    application.add_handler(CallbackQueryHandler(
+        user_handlers.terms_page_callback, pattern="^terms_(conditions|faq)$"))
+    application.add_handler(CallbackQueryHandler(user_handlers.terms_callback, pattern="^terms$"))
+    application.add_handler(CallbackQueryHandler(user_handlers.language_callback, pattern="^language$"))
+    application.add_handler(CallbackQueryHandler(user_handlers.set_language_callback, pattern="^set_lang_"))
     application.add_handler(CallbackQueryHandler(user_handlers.main_menu_callback, pattern="^back$"))  # Back button goes to main menu
     application.add_handler(CallbackQueryHandler(user_handlers.back_to_products_callback, pattern="^back_to_products$"))
     application.add_handler(CallbackQueryHandler(user_handlers.products_callback, pattern="^products(_page_\\d+)?$"))
@@ -448,7 +555,48 @@ def build_application(post_init=None):
     application.add_handler(CallbackQueryHandler(payment_handlers.cancel_payment_page, pattern="^cancel$"))
 
     # Admin callback handlers
-    application.add_handler(CallbackQueryHandler(admin_handlers.admin_menu_callback, pattern="^admin_menu$"))
+    # The Admin Panel: one main menu, sixteen sections. admin_menu keeps
+    # its callback so /admin and every existing "back to admin" button
+    # still land here.
+    application.add_handler(CallbackQueryHandler(
+        admin_panel.admin_panel_menu, pattern="^admin_menu$"))
+    application.add_handler(CallbackQueryHandler(
+        admin_panel.admin_panel_list, pattern="^apanel_(ord|prod|usr)_"))
+    application.add_handler(CallbackQueryHandler(
+        admin_panel.admin_panel_report, pattern="^apanel_rep_"))
+    application.add_handler(CallbackQueryHandler(
+        admin_panel.admin_panel_stats,
+        pattern="^apanel_(ref_stats|ref_top|ref_history|wal_stats|bc_audience)$"))
+
+    wallet_adjust_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(
+            admin_panel.wallet_adjust_start, pattern="^apanel_wal_(add|deduct)$")],
+        states={
+            admin_panel.WALLET_TARGET: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND,
+                               admin_panel.wallet_adjust_target)],
+            admin_panel.WALLET_AMOUNT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND,
+                               admin_panel.wallet_adjust_amount)],
+            admin_panel.WALLET_CONFIRM: [
+                CallbackQueryHandler(admin_panel.wallet_adjust_apply,
+                                     pattern="^apanel_wal_apply$")],
+        },
+        fallbacks=[
+            CallbackQueryHandler(admin_panel.wallet_adjust_cancel,
+                                 pattern="^apanel_wallet$"),
+            MessageHandler(filters.COMMAND, admin_panel.wallet_adjust_cancel),
+        ],
+        per_user=True,
+        per_chat=True,
+        allow_reentry=True,
+    )
+    application.add_handler(wallet_adjust_conv)
+
+    # Section screens last, so the more specific apanel_ patterns above win.
+    application.add_handler(CallbackQueryHandler(
+        admin_panel.admin_panel_section, pattern="^apanel_"))
+    application.add_handler(CallbackQueryHandler(admin_handlers.admin_action_log_callback, pattern="^admin_action_log$"))
     application.add_handler(CallbackQueryHandler(admin_handlers.admin_products_callback, pattern="^admin_products$"))
     application.add_handler(CallbackQueryHandler(admin_handlers.admin_restock_keys_callback, pattern="^admin_restock_keys$"))
     application.add_handler(CallbackQueryHandler(admin_handlers.admin_manage_categories_callback, pattern="^admin_manage_categories$"))
@@ -478,20 +626,55 @@ def build_application(post_init=None):
     application.add_handler(CallbackQueryHandler(admin_handlers.noop_callback, pattern="^noop$"))
 
     # Restock keys conversation handler
+    # filters.User(user_id=list(...)) so every configured admin (not just the
+    # single legacy ADMIN_TELEGRAM_ID) can restock - the entry point already
+    # checks is_admin(), but the follow-up MessageHandlers need their own
+    # filter since a plain text/document message is not a callback query.
+    admin_ids = list(settings.ADMIN_IDS)
     restock_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(admin_handlers.admin_select_product_restock_callback, pattern="^select_product_")],
         states={
             admin_handlers.WAITING_FOR_KEYS: [
-                MessageHandler(filters.Document.ALL & filters.User(settings.ADMIN_TELEGRAM_ID), admin_handlers.handle_restock_keys_file),
-                MessageHandler(filters.TEXT & ~filters.COMMAND & filters.User(settings.ADMIN_TELEGRAM_ID), admin_handlers.handle_restock_keys_paste),
+                MessageHandler(filters.Document.ALL & filters.User(user_id=admin_ids), admin_handlers.handle_restock_keys_file),
+                MessageHandler(filters.TEXT & ~filters.COMMAND & filters.User(user_id=admin_ids), admin_handlers.handle_restock_keys_paste),
             ],
         },
         fallbacks=[
             CallbackQueryHandler(admin_handlers.cancel_restock, pattern="^cancel_restock$"),
-            CommandHandler("cancel", admin_handlers.cancel_restock, filters=filters.User(settings.ADMIN_TELEGRAM_ID)),
+            CommandHandler("cancel", admin_handlers.cancel_restock, filters=filters.User(user_id=admin_ids)),
         ],
     )
     application.add_handler(restock_conv)
+
+    # Binance "Cancel Order" lives outside the top-up conversation: the
+    # conversation has already ended by the time the checkout is on screen.
+    application.add_handler(CallbackQueryHandler(
+        binance_pay_handlers.binance_cancel_order, pattern="^binance_cancel_"))
+
+    # Binance admin panel. Every one of these re-checks is_admin() itself -
+    # the pattern is not the authorization.
+    # Admin -> Payments hub, and one screen per method. The toggle pattern
+    # is matched before the detail pattern, which would otherwise swallow
+    # "payadmin_toggle_<key>" as a method named "toggle_<key>".
+    application.add_handler(CallbackQueryHandler(
+        payments_admin.payments_menu, pattern="^payadmin_menu$"))
+    application.add_handler(CallbackQueryHandler(
+        payments_admin.payment_method_toggle, pattern="^payadmin_toggle_"))
+    application.add_handler(CallbackQueryHandler(
+        payments_admin.payment_method_detail, pattern="^payadmin_"))
+
+    application.add_handler(CallbackQueryHandler(
+        binance_admin.binance_admin_menu, pattern="^binadmin_menu$"))
+    application.add_handler(CallbackQueryHandler(
+        binance_admin.binance_admin_toggle, pattern="^binadmin_toggle$"))
+    application.add_handler(CallbackQueryHandler(
+        binance_admin.binance_admin_test, pattern="^binadmin_test$"))
+    application.add_handler(CallbackQueryHandler(
+        binance_admin.binance_admin_monitor, pattern="^binadmin_mon_"))
+    application.add_handler(CallbackQueryHandler(
+        binance_admin.binance_admin_retry, pattern="^binadmin_retry_"))
+    application.add_handler(CallbackQueryHandler(
+        binance_admin.binance_admin_close, pattern="^binadmin_close_"))
 
     # Schedule background jobs
     job_queue = application.job_queue
@@ -507,6 +690,18 @@ def build_application(post_init=None):
         interval=60,
         first=30
     )
+
+    # Binance top-ups whose id was submitted but did not resolve first time.
+    # Same queue as the pollers above - no second scheduler. Far slower than
+    # the CryptoBot poll because the Pay history endpoint is Weight(UID) 3000.
+    if binance_pay_handlers.binance_pay_available():
+        logger.info("Scheduling Binance verification retry job (every %ss)",
+                    settings.BINANCE_VERIFY_RETRY_INTERVAL)
+        job_queue.run_repeating(
+            binance_pay_handlers.retry_pending_binance_payments,
+            interval=settings.BINANCE_VERIFY_RETRY_INTERVAL,
+            first=settings.BINANCE_VERIFY_RETRY_INTERVAL,
+        )
 
     # Availability broadcast job - runs every 12 hours (43200 seconds)
     # NOTE: this used to fire 10 seconds after every restart, so each restart
@@ -532,11 +727,18 @@ def main():
         logger.error(f"Configuration error: {e}")
         return
 
+    init_sentry()
+
     try:
         initialize_database()
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
         return
+
+    # Load the payment method switches once, before any update is served,
+    # so the keyboard builders never touch the database from the event loop.
+    payment_methods.refresh()
+    store_content.refresh()
 
     application = build_application()
 

@@ -29,11 +29,12 @@ logging.getLogger("waitress").setLevel(logging.WARNING)
 
 logger = logging.getLogger("app")
 
-from config import settings, validate_settings          # noqa: E402
+from config import settings, validate_settings, init_sentry  # noqa: E402
 from database.init_data import initialize_database      # noqa: E402
 from telegram import Update                              # noqa: E402
 import bot as bot_module                                # noqa: E402
 import webhook_server                                   # noqa: E402
+from services import payment_methods, store_content                    # noqa: E402
 
 
 def _make_threadsafe_notifier(application, loop):
@@ -66,6 +67,8 @@ def main():
         logger.error("Configuration error: %s", e)
         sys.exit(1)
 
+    init_sentry()
+
     # 2. Database (Supabase in production). Fail loudly: a bot running against
     #    an unreachable database would break on the very first message.
     try:
@@ -73,6 +76,12 @@ def main():
     except Exception as e:
         logger.error("Database initialization failed: %s", e)
         sys.exit(1)
+
+    # 2b. Load the payment method switches once, before any update is
+    #     served. They are read by keyboard builders on the event loop, so
+    #     they must never hit the database themselves.
+    payment_methods.refresh()
+    store_content.refresh()
 
     # 3. Make sure the asset directories exist (a Railway Volume mounts empty).
     for directory in (settings.ASSETS_DIR, settings.LOGOS_DIR, settings.PRODUCTS_DIR):
