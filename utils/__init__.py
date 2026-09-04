@@ -8,6 +8,7 @@ from .telegram_text import (
 )
 from .broadcast import broadcast, BroadcastResult
 from .notify import notify_user, UNREACHABLE
+from .paging import page_number, page_of, Page, PAGE_SIZE
 from .helpers import (
     is_admin, admin_only, format_price,
     format_datetime, calculate_expiry_time, paginate_items,
@@ -43,6 +44,7 @@ __all__ = [
     'create_language_keyboard', 'create_terms_menu_keyboard',
     'split_message', 'edit_or_split', 'send_or_split', 'MAX_MESSAGE',
     'broadcast', 'BroadcastResult', 'notify_user', 'UNREACHABLE',
+    'page_number', 'page_of', 'Page', 'PAGE_SIZE',
     'create_cancel_keyboard', 'create_payment_method_keyboard',
     'payment_methods_available', 'two_column_rows',
     'create_support_keyboard',

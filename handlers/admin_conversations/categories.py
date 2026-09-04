@@ -13,7 +13,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 from database import (
     get_db_session, Category, Subcategory, Product
 )
-from utils import is_admin, create_admin_category_menu_keyboard
+from utils import is_admin, create_admin_category_menu_keyboard, page_number, page_of
 
 logger = logging.getLogger(__name__)
 
@@ -195,35 +195,25 @@ async def edit_category_start(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     await query.answer()
 
-    # Get page number from callback data (default to 0)
-    page = 0
-    if "_page_" in query.data:
-        page = int(query.data.split("_page_")[1])
+    wanted = page_number(query.data)
 
     def _sync():
         with get_db_session() as session:
-            all_categories = session.query(Category).order_by(Category.id).all()
-            return [(c.id, c.name) for c in all_categories]
+            page = page_of(session.query(Category).order_by(Category.id), wanted)
+            return page, [(c.id, c.name) for c in page.rows]
 
-    categories_data = await asyncio.to_thread(_sync)
+    page, rows = await asyncio.to_thread(_sync)
 
-    if not categories_data:
+    if not rows:
         await query.edit_message_text(
             "❌ No categories found. Please create a category first.",
             reply_markup=create_admin_category_menu_keyboard()
         )
         return ConversationHandler.END
 
-    # Pagination settings
-    items_per_page = 5
-    total_pages = (len(categories_data) + items_per_page - 1) // items_per_page
-    start_idx = page * items_per_page
-    end_idx = start_idx + items_per_page
-    page_categories = categories_data[start_idx:end_idx]
-
     # Build category selection keyboard
     keyboard = []
-    for cat_id, name in page_categories:
+    for cat_id, name in rows:
         keyboard.append([
             InlineKeyboardButton(
                 f"📁 {name}",
@@ -232,13 +222,17 @@ async def edit_category_start(update: Update, context: ContextTypes.DEFAULT_TYPE
         ])
 
     # Add pagination buttons if needed
-    if total_pages > 1:
+    if page.total_pages > 1:
         pagination_row = []
-        if page > 0:
-            pagination_row.append(InlineKeyboardButton("◀️ Previous", callback_data=f"admin_edit_category_page_{page-1}"))
-        pagination_row.append(InlineKeyboardButton(f"Page {page+1}/{total_pages}", callback_data="noop"))
-        if page < total_pages - 1:
-            pagination_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"admin_edit_category_page_{page+1}"))
+        if page.has_previous:
+            pagination_row.append(InlineKeyboardButton(
+                "◀️ Previous",
+                callback_data=f"admin_edit_category_page_{page.number - 1}"))
+        pagination_row.append(InlineKeyboardButton(page.label, callback_data="noop"))
+        if page.has_next:
+            pagination_row.append(InlineKeyboardButton(
+                "Next ▶️",
+                callback_data=f"admin_edit_category_page_{page.number + 1}"))
         keyboard.append(pagination_row)
 
     # Add back button
@@ -454,42 +448,32 @@ async def edit_subcategory_start(update: Update, context: ContextTypes.DEFAULT_T
 
     await query.answer()
 
-    # Get page number from callback data (default to 0)
-    page = 0
-    if "_page_" in query.data:
-        page = int(query.data.split("_page_")[1])
+    wanted = page_number(query.data)
 
     def _sync():
+        # The parent category name comes from a join, not from a query per
+        # subcategory.
         with get_db_session() as session:
-            # Get all subcategories with their parent categories
-            all_subcategories = session.query(Subcategory).order_by(Subcategory.id).all()
+            page = page_of(
+                session.query(Subcategory.id, Subcategory.name, Category.name)
+                .outerjoin(Category, Category.id == Subcategory.category_id)
+                .order_by(Subcategory.id),
+                wanted)
+            return page, [(sub_id, name, category_name or "No Category")
+                          for sub_id, name, category_name in page.rows]
 
-            rows = []
-            for subcategory in all_subcategories:
-                category = session.query(Category).filter_by(id=subcategory.category_id).first() if subcategory.category_id else None
-                category_label = category.name if category else "No Category"
-                rows.append((subcategory.id, subcategory.name, category_label))
-            return rows
+    page, rows = await asyncio.to_thread(_sync)
 
-    subcategories_data = await asyncio.to_thread(_sync)
-
-    if not subcategories_data:
+    if not rows:
         await query.edit_message_text(
             "❌ No subcategories found. Please create a subcategory first.",
             reply_markup=create_admin_category_menu_keyboard()
         )
         return ConversationHandler.END
 
-    # Pagination settings
-    items_per_page = 5
-    total_pages = (len(subcategories_data) + items_per_page - 1) // items_per_page
-    start_idx = page * items_per_page
-    end_idx = start_idx + items_per_page
-    page_subcategories = subcategories_data[start_idx:end_idx]
-
     # Build subcategory selection keyboard
     keyboard = []
-    for sub_id, name, category_label in page_subcategories:
+    for sub_id, name, category_label in rows:
         keyboard.append([
             InlineKeyboardButton(
                 f"📂 {name} (in {category_label})",
@@ -498,13 +482,17 @@ async def edit_subcategory_start(update: Update, context: ContextTypes.DEFAULT_T
         ])
 
     # Add pagination buttons if needed
-    if total_pages > 1:
+    if page.total_pages > 1:
         pagination_row = []
-        if page > 0:
-            pagination_row.append(InlineKeyboardButton("◀️ Previous", callback_data=f"admin_edit_subcategory_page_{page-1}"))
-        pagination_row.append(InlineKeyboardButton(f"Page {page+1}/{total_pages}", callback_data="noop"))
-        if page < total_pages - 1:
-            pagination_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"admin_edit_subcategory_page_{page+1}"))
+        if page.has_previous:
+            pagination_row.append(InlineKeyboardButton(
+                "◀️ Previous",
+                callback_data=f"admin_edit_subcategory_page_{page.number - 1}"))
+        pagination_row.append(InlineKeyboardButton(page.label, callback_data="noop"))
+        if page.has_next:
+            pagination_row.append(InlineKeyboardButton(
+                "Next ▶️",
+                callback_data=f"admin_edit_subcategory_page_{page.number + 1}"))
         keyboard.append(pagination_row)
 
     # Add back button

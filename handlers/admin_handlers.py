@@ -29,13 +29,17 @@ from utils import (
     create_admin_category_menu_keyboard, create_admin_user_menu_keyboard,
     create_admin_order_menu_keyboard, create_admin_settings_menu_keyboard,
     create_admin_broadcast_menu_keyboard, parse_keys_from_text, clear_ban_cache,
-    notify_user, UNREACHABLE,
+    notify_user, UNREACHABLE, page_number, page_of,
 )
 from telegram.ext import ConversationHandler
 from telegram.error import BadRequest
 
 # Conversation states for restock keys
 WAITING_FOR_KEYS = 1
+
+# How many pending transactions one screen offers. Telegram will not
+# accept an unbounded keyboard, and an admin cannot use one either.
+_PENDING_LIMIT = 20
 
 # Upper bound for uploaded key files (1 MB)
 MAX_KEYS_FILE_BYTES = 1024 * 1024
@@ -392,35 +396,30 @@ async def admin_view_users_callback(update: Update, context: ContextTypes.DEFAUL
 
     await query.answer()
 
-    # Get page number from callback data (default to 0)
-    page = 0
-    if "_page_" in query.data:
-        page = int(query.data.split("_page_")[1])
+    wanted = page_number(query.data)
 
     def _sync():
+        # One page out of SQL. This used to load every user row and keep
+        # five, which an admin paging through a real user list pays for on
+        # every tap.
         with get_db_session() as session:
-            all_users = session.query(User).order_by(User.created_at.desc()).all()
-            return [(u.id, u.telegram_id, u.username, u.wallet_balance, u.is_banned) for u in all_users]
+            page = page_of(
+                session.query(User).order_by(User.created_at.desc()), wanted)
+            return page, [(u.id, u.telegram_id, u.username, u.wallet_balance,
+                           u.is_banned) for u in page.rows]
 
-    users_data = await asyncio.to_thread(_sync)
+    page, rows = await asyncio.to_thread(_sync)
 
-    if not users_data:
+    if not rows:
         await query.edit_message_text(
             "👥 No users found.",
             reply_markup=create_admin_user_menu_keyboard()
         )
         return
 
-    # Pagination settings
-    items_per_page = 5
-    total_pages = (len(users_data) + items_per_page - 1) // items_per_page
-    start_idx = page * items_per_page
-    end_idx = start_idx + items_per_page
-    page_users = users_data[start_idx:end_idx]
-
     # Build user selection keyboard
     keyboard = []
-    for user_id, telegram_id, username, wallet_balance, is_banned in page_users:
+    for user_id, telegram_id, username, wallet_balance, is_banned in rows:
         status_icon = "🚫" if is_banned else "✅"
         username_display = f"@{username}" if username else f"ID:{telegram_id}"
         keyboard.append([
@@ -431,13 +430,17 @@ async def admin_view_users_callback(update: Update, context: ContextTypes.DEFAUL
         ])
 
     # Add pagination buttons if needed
-    if total_pages > 1:
+    if page.total_pages > 1:
         pagination_row = []
-        if page > 0:
-            pagination_row.append(InlineKeyboardButton("◀️ Previous", callback_data=f"admin_view_users_page_{page-1}"))
-        pagination_row.append(InlineKeyboardButton(f"Page {page+1}/{total_pages}", callback_data="noop"))
-        if page < total_pages - 1:
-            pagination_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"admin_view_users_page_{page+1}"))
+        if page.has_previous:
+            pagination_row.append(InlineKeyboardButton(
+                "◀️ Previous",
+                callback_data=f"admin_view_users_page_{page.number - 1}"))
+        pagination_row.append(InlineKeyboardButton(page.label, callback_data="noop"))
+        if page.has_next:
+            pagination_row.append(InlineKeyboardButton(
+                "Next ▶️",
+                callback_data=f"admin_view_users_page_{page.number + 1}"))
         keyboard.append(pagination_row)
 
     # Add back button
@@ -645,23 +648,26 @@ async def admin_view_orders_callback(update: Update, context: ContextTypes.DEFAU
 
     await query.answer()
 
-    # Get page number from callback data (default to 0)
-    page = 0
-    if "_page_" in query.data:
-        page = int(query.data.split("_page_")[1])
+    wanted = page_number(query.data)
 
     def _sync():
+        # One page, and the buyer's name joined rather than fetched per
+        # order: this loaded every order and then ran a User query for each
+        # one, so a store with a thousand orders paid a thousand and one
+        # queries to show five rows.
         with get_db_session() as session:
-            all_orders = session.query(Order).order_by(Order.created_at.desc()).all()
+            page = page_of(
+                session.query(Order.id, Order.status, Order.total_amount,
+                              User.username, User.telegram_id)
+                .outerjoin(User, User.id == Order.user_id)
+                .order_by(Order.created_at.desc()),
+                wanted)
+            return page, [
+                (oid, status, amount,
+                 username if username else f"ID:{telegram_id or 'Unknown'}")
+                for oid, status, amount, username, telegram_id in page.rows]
 
-            rows = []
-            for order in all_orders:
-                user = session.query(User).filter_by(id=order.user_id).first()
-                username = user.username if user and user.username else f"ID:{user.telegram_id if user else 'Unknown'}"
-                rows.append((order.id, order.status, order.total_amount, username))
-            return rows
-
-    rows = await asyncio.to_thread(_sync)
+    page, rows = await asyncio.to_thread(_sync)
 
     if not rows:
         await query.edit_message_text(
@@ -670,20 +676,12 @@ async def admin_view_orders_callback(update: Update, context: ContextTypes.DEFAU
         )
         return
 
-    # Pagination settings
-    orders_per_page = 5
-    total_pages = (len(rows) + orders_per_page - 1) // orders_per_page
-    start_idx = page * orders_per_page
-    end_idx = start_idx + orders_per_page
-    page_rows = rows[start_idx:end_idx]
-
-    # Build message
-    message = f"🛍 Recent Orders (Page {page + 1}/{total_pages}):\n\n"
+    message = f"🛍 Recent Orders ({page.label}):\n\n"
 
     # Build keyboard with order buttons
     keyboard = []
 
-    for order_id, status, total_amount, username in page_rows:
+    for order_id, status, total_amount, username in rows:
         # Format status emoji
         status_emoji = {
             OrderStatus.PROCESSING: "⏳",
@@ -696,12 +694,16 @@ async def admin_view_orders_callback(update: Update, context: ContextTypes.DEFAU
         keyboard.append([InlineKeyboardButton(button_text, callback_data=f"view_order_{order_id}")])
 
     # Add pagination buttons if needed
-    if total_pages > 1:
+    if page.total_pages > 1:
         pagination_row = []
-        if page > 0:
-            pagination_row.append(InlineKeyboardButton("◀️ Previous", callback_data=f"admin_view_orders_page_{page-1}"))
-        if page < total_pages - 1:
-            pagination_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"admin_view_orders_page_{page+1}"))
+        if page.has_previous:
+            pagination_row.append(InlineKeyboardButton(
+                "◀️ Previous",
+                callback_data=f"admin_view_orders_page_{page.number - 1}"))
+        if page.has_next:
+            pagination_row.append(InlineKeyboardButton(
+                "Next ▶️",
+                callback_data=f"admin_view_orders_page_{page.number + 1}"))
         if pagination_row:
             keyboard.append(pagination_row)
 
@@ -1098,19 +1100,28 @@ async def _render_pending_txn_menu(query, action: str):
     prefix = "confirm_payment_" if is_confirm else "cancel_payment_"
 
     def _sync():
+        # Bounded, and the buyer joined rather than fetched per row. This
+        # listed every pending transaction as its own button and ran a User
+        # query for each: a backlog of a few hundred meant a few hundred
+        # queries and a keyboard too large for Telegram to accept, so the
+        # screen an admin needs most is the one that broke first.
         with get_db_session() as session:
-            transactions = session.query(Transaction).filter_by(
-                status=TransactionStatus.PENDING
-            ).order_by(Transaction.created_at.desc()).all()
+            pending = session.query(Transaction).filter_by(
+                status=TransactionStatus.PENDING)
+            waiting = pending.count()
+            found = (session.query(Transaction.id, Transaction.amount,
+                                   Transaction.payment_method,
+                                   User.username, User.telegram_id)
+                     .outerjoin(User, User.id == Transaction.user_id)
+                     .filter(Transaction.status == TransactionStatus.PENDING)
+                     .order_by(Transaction.created_at.desc())
+                     .limit(_PENDING_LIMIT).all())
+            return waiting, [
+                (txn_id, username if username else f"ID:{telegram_id or 'Unknown'}",
+                 amount, method.value)
+                for txn_id, amount, method, username, telegram_id in found]
 
-            rows = []
-            for txn in transactions:
-                user = session.query(User).filter_by(id=txn.user_id).first()
-                username = user.username if user and user.username else f"ID:{user.telegram_id if user else 'Unknown'}"
-                rows.append((txn.id, username, txn.amount, txn.payment_method.value))
-            return rows
-
-    rows = await asyncio.to_thread(_sync)
+    waiting, rows = await asyncio.to_thread(_sync)
 
     back = [[InlineKeyboardButton("🔙 Back to Orders", callback_data="admin_orders")]]
 
@@ -1135,9 +1146,16 @@ async def _render_pending_txn_menu(query, action: str):
     keyboard += back
 
     if is_confirm:
-        message = f"✅ Manual Payment Confirmation ({len(rows)} pending)\n\nSelect a transaction to confirm:"
+        message = (f"✅ Manual Payment Confirmation ({waiting} pending)\n\n"
+                   "Select a transaction to confirm:")
     else:
-        message = f"❌ Cancel Payments ({len(rows)} pending)\n\nSelect a transaction to cancel:"
+        message = (f"❌ Cancel Payments ({waiting} pending)\n\n"
+                   "Select a transaction to cancel:")
+    if waiting > len(rows):
+        # Say so rather than silently showing a truncated list. Each one
+        # handled drops off, so the rest surface as the admin works down.
+        message += (f"\n\nShowing the {len(rows)} most recent. "
+                    f"{waiting - len(rows)} more will appear as these are cleared.")
 
     try:
         await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard))

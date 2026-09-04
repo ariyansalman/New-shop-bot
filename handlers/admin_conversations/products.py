@@ -18,7 +18,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 from database import (
     get_db_session, Category, Subcategory, Product, ProductType, UNLIMITED_STOCK
 )
-from utils import is_admin, format_price, money_or_none, log_admin_action, create_admin_product_menu_keyboard, two_column_rows
+from utils import is_admin, format_price, money_or_none, log_admin_action, create_admin_product_menu_keyboard, two_column_rows, page_number, page_of
 from config.settings import settings as app_settings
 
 logger = logging.getLogger(__name__)
@@ -572,35 +572,27 @@ async def edit_product_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     await query.answer()
 
-    # Get page number from callback data (default to 0)
-    page = 0
-    if "_page_" in query.data:
-        page = int(query.data.split("_page_")[1])
+    wanted = page_number(query.data)
 
     def _sync():
+        # One page out of SQL rather than the whole catalogue sliced in
+        # Python, which was repeated on every tap of Next.
         with get_db_session() as session:
-            all_products = session.query(Product).order_by(Product.id).all()
-            return [(p.id, p.name, p.price, p.is_active) for p in all_products]
+            page = page_of(session.query(Product).order_by(Product.id), wanted)
+            return page, [(p.id, p.name, p.price, p.is_active) for p in page.rows]
 
-    products_data = await asyncio.to_thread(_sync)
+    page, rows = await asyncio.to_thread(_sync)
 
-    if not products_data:
+    if not rows:
         await query.edit_message_text(
             "❌ No products found. Please create a product first.",
             reply_markup=create_admin_product_menu_keyboard()
         )
         return ConversationHandler.END
 
-    # Pagination settings
-    items_per_page = 5
-    total_pages = (len(products_data) + items_per_page - 1) // items_per_page
-    start_idx = page * items_per_page
-    end_idx = start_idx + items_per_page
-    page_products = products_data[start_idx:end_idx]
-
     # Build product selection keyboard
     keyboard = []
-    for product_id, prod_name, price, is_active in page_products:
+    for product_id, prod_name, price, is_active in rows:
         status_icon = "✅" if is_active else "❌"
         keyboard.append([
             InlineKeyboardButton(
@@ -610,13 +602,17 @@ async def edit_product_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
         ])
 
     # Add pagination buttons if needed
-    if total_pages > 1:
+    if page.total_pages > 1:
         pagination_row = []
-        if page > 0:
-            pagination_row.append(InlineKeyboardButton("◀️ Previous", callback_data=f"admin_edit_product_page_{page-1}"))
-        pagination_row.append(InlineKeyboardButton(f"Page {page+1}/{total_pages}", callback_data="noop"))
-        if page < total_pages - 1:
-            pagination_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"admin_edit_product_page_{page+1}"))
+        if page.has_previous:
+            pagination_row.append(InlineKeyboardButton(
+                "◀️ Previous",
+                callback_data=f"admin_edit_product_page_{page.number - 1}"))
+        pagination_row.append(InlineKeyboardButton(page.label, callback_data="noop"))
+        if page.has_next:
+            pagination_row.append(InlineKeyboardButton(
+                "Next ▶️",
+                callback_data=f"admin_edit_product_page_{page.number + 1}"))
         keyboard.append(pagination_row)
 
     # Add cancel button
