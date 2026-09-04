@@ -36,3 +36,24 @@ def test_every_admin_conversations_reference_in_bot_py_resolves():
 
     missing = [n for n in names if not hasattr(ac, n)]
     assert not missing, f"bot.py references admin_conversations.{missing} which no longer exists"
+
+
+def test_building_the_application_is_quiet():
+    """Twenty expected warnings per boot bury the one that matters.
+
+    python-telegram-bot warns once per ConversationHandler that a
+    CallbackQueryHandler is not tracked per message while per_message is
+    False. That is the correct setting here - every one of these
+    conversations mixes button taps with typed replies, and per_message=True
+    only works for a conversation made of buttons alone - so the warning is
+    expected and is filtered. Anything else must still come through.
+    """
+    import warnings
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        bot_module.apply_warning_filters()
+        bot_module.build_application()
+
+    unexpected = [str(w.message) for w in caught]
+    assert not unexpected, "unexpected warnings at boot:\n  " + "\n  ".join(unexpected)

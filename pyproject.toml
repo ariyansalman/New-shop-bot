@@ -30,3 +30,8 @@ asyncio_default_fixture_loop_scope = "function"
 # locally under `python -m pytest` (which prepends the cwd to sys.path
 # itself). Confirmed by reproducing locally with the bare `pytest` form.
 pythonpath = ["."]
+# The same expected warning bot.py filters at boot. Twenty copies per
+# collection made the real warnings in a test run hard to find.
+filterwarnings = [
+    "ignore:If 'per_message=False':UserWarning",
+]

@@ -1,6 +1,7 @@
 """Main bot entry point for the Telegram Digital Products Store."""
 
 import logging
+import warnings
 
 from telegram import Update
 from telegram.error import BadRequest, Forbidden
@@ -22,6 +23,28 @@ from services import payment_methods, store_content
 # M  M M  MMMMM  M M  MMMM' .M M  MMM  MMM  M M  MMMM' .M MM  MMMMMMMM M  MMP' .MM 
 # M  M M  MMMMM  M M       .MM M  MMM  MMM  M M       .MM MM        .M M     .dMMM 
 # MMMM MMMMMMMMMMM MMMMMMMMMMM MMMMMMMMMMMMMM MMMMMMMMMMM MMMMMMMMMMMM MMMMMMMMMMM 
+
+# python-telegram-bot warns once per ConversationHandler that a
+# CallbackQueryHandler is not tracked per message while per_message=False.
+# That is the correct setting here: every one of these conversations mixes
+# button taps with typed replies, and per_message=True only works when a
+# conversation is buttons alone. So the warning is expected, and twenty
+# copies of it on the stderr stream at every boot is twenty lines an
+# operator has to read past to find a real one.
+def apply_warning_filters():
+    """Silence the warnings we have already decided are expected.
+
+    A function rather than a bare call at import, so a test can re-apply
+    it inside warnings.catch_warnings() and confirm nothing else is being
+    swallowed along with it.
+    """
+    from telegram.warnings import PTBUserWarning
+
+    warnings.filterwarnings("ignore", message=r".*per_message=False.*",
+                            category=PTBUserWarning)
+
+
+apply_warning_filters()
 
 # Configure logging
 logging.basicConfig(
