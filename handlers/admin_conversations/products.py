@@ -765,7 +765,11 @@ async def edit_select_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
         def _sync():
             with get_db_session() as session:
                 from database import ProductKey
-                product = session.query(Product).filter_by(id=product_id).first()
+                # Locked: this deletes the unsold keys and writes
+                # stock_count to zero, while confirm_purchase may be
+                # holding this same row to sell some of them.
+                product = (session.query(Product).filter_by(id=product_id)
+                           .with_for_update().first())
                 prod_name = product.name
 
                 # Count and delete only unsold keys

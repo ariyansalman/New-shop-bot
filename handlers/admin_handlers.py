@@ -725,7 +725,13 @@ def _restock_keys_sync(product_id, keys, admin_telegram_id):
     new_stock_count).
     """
     with get_db_session() as session:
-        product = session.query(Product).filter_by(id=product_id).first()
+        # Locked, because the block below recomputes stock_count from a
+        # count of unsold keys. confirm_purchase locks this same row while
+        # it marks keys sold; without the lock a purchase committing in
+        # between makes this write back the pre-sale figure, and the store
+        # advertises keys it has already delivered.
+        product = (session.query(Product).filter_by(id=product_id)
+                   .with_for_update().first())
 
         if not product:
             return None
@@ -1361,14 +1367,24 @@ async def admin_cancel_order_callback(update: Update, context: ContextTypes.DEFA
                 user.wallet_balance = to_money(user.wallet_balance + order.total_amount)
 
             # Return the keys that were assigned to this order back to stock.
-            returned_keys = session.query(ProductKey).filter_by(order_id=order.id, is_sold=True).all()
+            returned_keys = session.query(ProductKey).filter_by(
+                order_id=order.id, is_sold=True).all()
+            returning = {}
             for key in returned_keys:
                 key.is_sold = False
                 key.order_id = None
                 key.sold_at = None
-                product = session.query(Product).filter_by(id=key.product_id).first()
+                returning[key.product_id] = returning.get(key.product_id, 0) + 1
+
+            # Each affected product is locked once and credited once, not
+            # re-fetched per key. stock_count is read-modify-written here,
+            # so a purchase committing alongside would otherwise overwrite
+            # the keys this cancellation just put back.
+            for product_id, returned in returning.items():
+                product = (session.query(Product).filter_by(id=product_id)
+                           .with_for_update().first())
                 if product:
-                    product.stock_count += 1
+                    product.stock_count += returned
 
             # Mark order as cancelled
             order.status = OrderStatus.CANCELLED

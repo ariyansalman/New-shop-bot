@@ -35,6 +35,81 @@ def functions(tree):
 
 MONEY_COLUMNS = {"wallet_balance", "referral_earnings"}
 
+# Stock is the same shape of defect with a different symptom. Restock
+# recomputes stock_count from a count of unsold keys, order cancellation
+# adds one back per returned key, and clearing keys writes zero - all
+# read-modify-write against a row confirm_purchase locks while it sells.
+# Lose the race and the store advertises keys it has already delivered.
+STOCK_COLUMNS = {"stock_count"}
+
+
+def _unlocked_writes(columns):
+    """Writes to `columns` on a row whose query held no lock.
+
+    Each function is judged on its own body. Assignments inside a nested
+    function are skipped, because the handlers here are one async body
+    wrapping several `def _sync()` closures: reading all of them together
+    let one branch's unlocked query stand in for another branch's locked
+    one, in either direction. The nested closures are checked in their own
+    right, since functions() yields them too.
+    """
+    unlocked = []
+
+    for rel, tree in production_files():
+        for fn in functions(tree):
+            nested = set()
+            for node in ast.walk(fn):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) \
+                        and node is not fn:
+                    nested.update(id(sub) for sub in ast.walk(node))
+
+            assigned = {}
+            for node in ast.walk(fn):
+                if id(node) in nested:
+                    continue
+                if isinstance(node, ast.Assign) and len(node.targets) == 1 \
+                        and isinstance(node.targets[0], ast.Name):
+                    assigned[node.targets[0].id] = ast.unparse(node.value)
+
+            for node in ast.walk(fn):
+                if id(node) in nested:
+                    continue
+                target = None
+                if isinstance(node, ast.Assign):
+                    for t in node.targets:
+                        if isinstance(t, ast.Attribute) and t.attr in columns:
+                            target = t
+                elif isinstance(node, ast.AugAssign) and \
+                        isinstance(node.target, ast.Attribute) and \
+                        node.target.attr in columns:
+                    target = node.target
+                if target is None or not isinstance(target.value, ast.Name):
+                    continue
+
+                source = assigned.get(target.value.id, "")
+                if "with_for_update" not in source:
+                    unlocked.append(
+                        f"{rel}:{node.lineno} {fn.name} writes "
+                        f"{target.value.id}.{target.attr}, but {target.value.id} "
+                        f"was read without a lock")
+
+    return unlocked
+
+
+def test_every_stock_write_holds_a_row_lock():
+    """Restock and a purchase touch the same row from two directions.
+
+    Restock counts unsold keys and writes the total back; a purchase
+    committing between the count and the write makes it restore the
+    pre-sale figure, so the catalogue offers keys that are already gone.
+    The buyer finds out at checkout.
+    """
+    unlocked = _unlocked_writes(STOCK_COLUMNS)
+
+    assert not unlocked, (
+        "Stock written on a row that was not locked:\n  "
+        + "\n  ".join(unlocked))
+
 
 def test_every_money_write_holds_a_row_lock():
     """A status check without a lock is a check-then-act race.
